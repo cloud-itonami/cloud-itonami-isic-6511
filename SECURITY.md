@@ -10,7 +10,7 @@ Report privately before opening public issues for:
 - credential exposure
 - real customer or case-record data exposure
 - authorization bypass
-- Life Insurance Governor bypass
+- UnderwritingGovernor bypass
 - audit-ledger tampering
 - over-disclosure in reports or exports
 

@@ -7,7 +7,7 @@ Governance covers both the capability layer and the operator model.
 
 Maintainers may merge changes that preserve these invariants:
 
-- the Life Insurance Governor remains independent of the advisor.
+- the UnderwritingGovernor remains independent of the advisor.
 - hard policy violations (fabricated spec-basis, sanctions hit, incomplete
   records) cannot be overridden by human approval.
 - binding a policy (issuing real coverage) or paying a death/maturity benefit claim always escalates to a human -- never automated.
@@ -27,7 +27,7 @@ separate trust mark and should require security, audit and data-flow review.
 
 Certified operators can lose certification for:
 
-- bypassing the Life Insurance Governor's policy checks
+- bypassing the UnderwritingGovernor's policy checks
 - mishandling customer data
 - misrepresenting certification status
 - failing to respond to security incidents

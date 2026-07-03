@@ -6,7 +6,7 @@
 2. Import historical policies/cases and counterparties.
 3. Run read-only validation of existing records against this blueprint's
    contracts.
-4. Configure the Life Insurance Governor's hold/escalation policy.
+4. Configure the UnderwritingGovernor's hold/escalation policy.
 5. Publish a dry-run operation and audit export.
 
 ## Minimum Production Controls

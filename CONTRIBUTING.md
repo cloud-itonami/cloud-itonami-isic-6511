@@ -19,7 +19,7 @@ Keep changes small and include tests for any capability-layer change.
 ## Rules
 
 - Do not commit real customer records, credentials, or personal/health data.
-- Keep binding a policy (issuing real coverage) or paying a death/maturity benefit claim behind the Life Insurance Governor.
+- Keep binding a policy (issuing real coverage) or paying a death/maturity benefit claim behind the UnderwritingGovernor.
 - Treat this vertical as high-risk: add tests for spec-basis, disbursement,
   disclosure and audit logging.
 - Document any new business-model or operator assumption in `docs/`.
