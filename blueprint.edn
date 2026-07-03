@@ -1,0 +1,11 @@
+{:itonami.blueprint/id "cloud-itonami-6511"
+ :itonami.blueprint/name "Life insurance"
+ :itonami.blueprint/isic-rev5 "6511"
+ :itonami.blueprint/domain :insurance/life
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:financial-inclusion :data-sovereignty :transparency]
+ :itonami.blueprint/governor :life-insurance-governor
+ :itonami.blueprint/required-technologies [:robotics :insurance :identity :forms :dmn :bpmn :audit-ledger]
+ :itonami.blueprint/optional-technologies []
+ :itonami.blueprint/status :public-oss
+ :itonami.blueprint/robotics true}
