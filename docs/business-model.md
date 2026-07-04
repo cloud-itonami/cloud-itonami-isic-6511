@@ -2,7 +2,7 @@
 
 ## Classification
 
-- Repository: `cloud-itonami-6511`
+- Repository: `cloud-itonami-isic-6511`
 - ISIC Rev.5: `6511`
 - Activity: individual and group life insurance -- underwriting, premium collection, and death/maturity benefit claims
 - Social impact: financial inclusion, data sovereignty, transparent audit

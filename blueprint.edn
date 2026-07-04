@@ -1,4 +1,4 @@
-{:itonami.blueprint/id "cloud-itonami-6511"
+{:itonami.blueprint/id "cloud-itonami-isic-6511"
  :itonami.blueprint/name "Life insurance"
  :itonami.blueprint/isic-rev5 "6511"
  :itonami.blueprint/domain :insurance/life

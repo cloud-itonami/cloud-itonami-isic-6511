@@ -1,4 +1,4 @@
-# ADR-0001: cloud-itonami-6511 -- Underwriter-LLM as a contained intelligence node
+# ADR-0001: cloud-itonami-isic-6511 -- Underwriter-LLM as a contained intelligence node
 
 - Status: Accepted (2026-07-03)
 - Related: `cloud-itonami-M6910` ADR-0001 (Registrar-LLM ⊣ RegistrarGovernor,
@@ -7,7 +7,7 @@
   (HR-LLM ⊣ PolicyGovernor), `robotaxi-actor` ADR-0001 (sealing an unsafe
   research model behind an independent governor), langgraph-clj ADR-0001
   (Pregel superstep + interrupt + Datomic checkpoint)
-- Context: `cloud-itonami-6511` published a business/operator-model
+- Context: `cloud-itonami-isic-6511` published a business/operator-model
   blueprint (insurance coverage push) but stopped at `:blueprint`
   maturity -- no governed actor implementation. This ADR deepens it to
   `:implemented`, the 3rd instance of this pattern in the fleet.
@@ -107,6 +107,6 @@ actor is for operators who want the full governed execution scaffold.
 
 | Option | Verdict | Reason |
 |---|---|---|
-| Keep `cloud-itonami-6511` at `:blueprint` only | ❌ | Leaves insurance without a single `:implemented` reference actor, unlike the real-estate/legal/HR peers |
+| Keep `cloud-itonami-isic-6511` at `:blueprint` only | ❌ | Leaves insurance without a single `:implemented` reference actor, unlike the real-estate/legal/HR peers |
 | Require `kotoba.insurance` (the capability lib) directly from `underwriting.*` | ❌ | Neither `formation.*` nor `realty.*` require their sibling capability libs; keeping the actor self-contained matches the established pattern and avoids coupling the governed-execution tier to the pure-contract tier |
 | Fabricate a global policy-number check-digit standard for conformance-test rigor | ❌ | No such standard exists for life-insurance policy numbers (unlike LEI); inventing one would be the same dishonesty the `:banking`/`:cae` placeholder fixes elsewhere in this fleet were meant to correct |

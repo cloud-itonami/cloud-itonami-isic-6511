@@ -78,7 +78,7 @@
       :covered (count have)
       :covered-jurisdictions (vec (sort have))
       :missing-jurisdictions (vec (sort missing))
-      :note (str "cloud-itonami-6511 R0: " (count catalog)
+      :note (str "cloud-itonami-isic-6511 R0: " (count catalog)
                  " jurisdictions seeded with an official spec-basis. "
                  "This is a starting catalog, not a survey of all ~194 "
                  "jurisdictions -- extend `underwriting.facts/catalog`, "

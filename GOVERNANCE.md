@@ -1,6 +1,6 @@
 # Governance
 
-`cloud-itonami-6511` is an OSS open-business blueprint for individual and group life insurance -- underwriting, premium collection, and death/maturity benefit claims.
+`cloud-itonami-isic-6511` is an OSS open-business blueprint for individual and group life insurance -- underwriting, premium collection, and death/maturity benefit claims.
 Governance covers both the capability layer and the operator model.
 
 ## Maintainers

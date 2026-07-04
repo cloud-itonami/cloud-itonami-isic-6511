@@ -1,4 +1,4 @@
-# cloud-itonami-6511
+# cloud-itonami-isic-6511
 
 Open Business Blueprint for **ISIC Rev.5 6511**: life insurance. This
 repository publishes a life-insurance underwriting/policy-binding
