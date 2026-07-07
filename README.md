@@ -132,6 +132,7 @@ has to `kotoba-lang/property`.
 | `src/underwriting/operation.cljc` | **OperationActor** -- langgraph-clj StateGraph |
 | `src/underwriting/sim.cljc` | demo driver |
 | `test/underwriting/*_test.clj` | governor contract · phase invariants · store parity · registry conformance · facts coverage |
+| `wasm/underwriting_decision.kotoba` | PoC: a WASM-compiled (`kotoba-lang/kotoba` -> `kotoba-lang/kototama`'s `actor:host` ABI) reduction of `underwriting.governor/check`, incl. an `llm-infer` advisor consult on escalation -- see `wasm/README.md` for scope, the input/output ABI, and what's out of scope (Store, EDN proposals, the StateGraph) |
 
 ## Jurisdiction coverage (honest)
 

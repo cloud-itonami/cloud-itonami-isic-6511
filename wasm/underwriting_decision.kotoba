@@ -1,0 +1,100 @@
+;; underwriting_decision.kotoba -- a WASM-compiled, capability-sandboxed
+;; reduction of `underwriting.governor/check` (src/underwriting/governor.cljc)
+;; for the `kototama.tender` actor:host ABI (ADR-2607062330/2607062400).
+;;
+;; SCOPE (read before trusting this as "the governor"): this is a FAITHFUL
+;; REDUCTION of the governor's decision logic to the `.kotoba` minimal
+;; subset (`def`/`defn`/`ns`/`if`/`let`/`do`/arithmetic/comparison + host
+;; imports -- no maps, no keywords, no Store, no StateGraph; see the
+;; language-limitation notes below). It is NOT a replacement for
+;; `underwriting.governor`/`underwriting.operation` and does not persist
+;; anything beyond the one `log-write` call each run makes. Concretely,
+;; out of scope here:
+;;   - `underwriting.store` (MemStore/DatomicStore, applications, KYC
+;;     records, assessments) -- this module has no Store; every fact the
+;;     governor would look up is instead a scalar flag the HOST caller
+;;     pokes into this instance's own linear memory before calling `main`
+;;     (see "Input ABI" below). Computing those flags from real
+;;     application/KYC/assessment data is the caller's job, same as it is
+;;     for `underwriting.governor/check`'s own callers.
+;;   - `underwriting.phase` (phase-gated auto-commit sets) and the
+;;     `langgraph-clj` StateGraph multi-step actor (`underwriting.operation`)
+;;     -- this is one `check`-shaped decision, not a multi-step run.
+;;   - EDN proposal shape (`:summary`/`:rationale`/`:cites`/`:effect`/...)
+;;     -- `.kotoba` has no maps/keywords, so the proposal is reduced to five
+;;     i32 flags in and one i64 decision code out (see below).
+;;   - Dynamic prompt interpolation: `.kotoba`'s `str-ptr`/`str-len` only
+;;     accept compile-time STRING LITERALS (no runtime string
+;;     concatenation/formatting primitive exists in the language -- see
+;;     `../wasm/README.md`), so the two prompts `llm-infer` sends are fixed
+;;     literals selected by which escalation branch is taken, not a
+;;     template filled in with the actual confidence value.
+;;
+;; Input ABI (host writes these BEFORE calling the 0-arity export `main`,
+;; matching `kototama.tender/call-main`'s zero-arg calling convention --
+;; there is no other way to pass per-run data into a `.kotoba` guest):
+;;   byte 0: has-spec-basis?  (0|1) -- underwriting.governor/spec-basis-violations
+;;   byte 1: sanctions-hit?   (0|1) -- underwriting.governor/sanctions-violations
+;;   byte 2: docs-complete?   (0|1) -- underwriting.governor/document-violations
+;;   byte 3: confidence-x100  (0..100, confidence * 100 -- no floats in this
+;;                             subset; governor's `confidence-floor` 0.6 is
+;;                             literal 60 here)
+;;   byte 4: is-actuation?    (0|1) -- underwriting.governor/high-stakes
+;;
+;; Output: `main`'s i64 result is a decision code --
+;;   0 = ok (auto), matching governor's `:ok? true`
+;;   1 = escalate (advisor consulted via llm-infer, human review required)
+;;   2 = hold (HARD violation -- structurally un-overridable, no advisor
+;;       call at all, mirroring the governor never asking the LLM to
+;;       relitigate a fabricated-law/sanctions/incomplete-docs hold)
+;; Every path also `log-write`s an audit line: either a fixed HOLD/AUTO-OK
+;; marker, the llm-infer reply bytes, or a fixed ESCALATE fallback marker
+;; when llm-infer fails closed (-1: no API key configured, or the call
+;; itself failed -- see kototama.tender's `llm-infer-host-fn`).
+(ns underwriting-decision)
+
+(defn main []
+  (let [has-spec-basis (mem-byte-at 0 0)
+        sanctions-hit (mem-byte-at 0 1)
+        docs-complete (mem-byte-at 0 2)
+        confidence-x100 (mem-byte-at 0 3)
+        is-actuation (mem-byte-at 0 4)]
+    (if (= has-spec-basis 0)
+      (do
+        (log-write (str-ptr "HOLD:no-spec-basis") (str-len "HOLD:no-spec-basis"))
+        2)
+      (if (= sanctions-hit 1)
+        (do
+          (log-write (str-ptr "HOLD:sanctions-hit") (str-len "HOLD:sanctions-hit"))
+          2)
+        (if (= docs-complete 0)
+          (do
+            (log-write (str-ptr "HOLD:incomplete-documents") (str-len "HOLD:incomplete-documents"))
+            2)
+          (if (= is-actuation 1)
+            (let [n (llm-infer
+                     (str-ptr "生命保険引受: policy/bindは実際の証券成立(actuation)です。ハード違反なし・書類充足ですが、必ず人間の承認が必要です。最終所見を一言で述べてください。")
+                     (str-len "生命保険引受: policy/bindは実際の証券成立(actuation)です。ハード違反なし・書類充足ですが、必ず人間の承認が必要です。最終所見を一言で述べてください。")
+                     2048 512)]
+              (if (< n 0)
+                (do
+                  (log-write (str-ptr "ESCALATE:actuation:llm-unavailable") (str-len "ESCALATE:actuation:llm-unavailable"))
+                  1)
+                (do
+                  (log-write 2048 n)
+                  1)))
+            (if (< confidence-x100 60)
+              (let [n (llm-infer
+                       (str-ptr "生命保険引受: LLM提案のconfidenceが閾値0.6未満です。人間のレビューが必要です。追加確認が必要な点を一言で述べてください。")
+                       (str-len "生命保険引受: LLM提案のconfidenceが閾値0.6未満です。人間のレビューが必要です。追加確認が必要な点を一言で述べてください。")
+                       2048 512)]
+                (if (< n 0)
+                  (do
+                    (log-write (str-ptr "ESCALATE:low-confidence:llm-unavailable") (str-len "ESCALATE:low-confidence:llm-unavailable"))
+                    1)
+                  (do
+                    (log-write 2048 n)
+                    1)))
+              (do
+                (log-write (str-ptr "AUTO-OK") (str-len "AUTO-OK"))
+                0))))))))
