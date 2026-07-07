@@ -1,0 +1,6 @@
+;; kotoba wasm policy for underwriting_decision.kotoba -- same shape as
+;; kotoba-lang/kotoba's own src/demo_actor_host_*_policy.edn fixtures
+;; (e.g. demo_actor_host_http_post_policy.edn / demo_actor_host_log_read_policy.edn).
+;; Grants exactly the two capabilities the module's host imports need:
+;; `log/write` (audit line) and `llm/infer` (advisor consult on escalation).
+{:kotoba.policy/capabilities #{:log/write :llm/infer}}
