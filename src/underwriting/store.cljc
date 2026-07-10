@@ -54,7 +54,14 @@
    {"party-1" {:id "party-1" :name "田中 花子" :role :insured :sanctions-hit? false :id-doc "passport-jp-****9012"}
     "party-2" {:id "party-2" :name "田中 一郎" :role :beneficiary :sanctions-hit? false :id-doc "passport-jp-****1234"}
     "party-3" {:id "party-3" :name "J. Doe" :role :insured :sanctions-hit? true :id-doc nil}
-    "party-4" {:id "party-4" :name "J. Doe Jr." :role :beneficiary :sanctions-hit? false :id-doc nil}}})
+    "party-4" {:id "party-4" :name "J. Doe Jr." :role :beneficiary :sanctions-hit? false :id-doc nil}
+    ;; deliberately clean on EVERY local field (no :sanctions-hit?, has an
+    ;; id-doc) -- this name is shared with cloud-itonami-isic-8291's own
+    ;; demo data (a sanctions-flagged official), so it exists purely to
+    ;; prove underwriting.corporate-intel's cross-reference catches a hit
+    ;; local-only screening would otherwise silently clear.
+    "party-5" {:id "party-5" :name "Jane Smith (demo)" :role :insured
+               :sanctions-hit? false :id-doc "passport-uk-****5678"}}})
 
 ;; ----------------------------- shared binding logic -----------------------------
 

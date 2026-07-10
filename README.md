@@ -127,11 +127,12 @@ has to `kotoba-lang/property`.
 | `src/underwriting/registry.cljc` | Policy-binding draft records (no fabricated international check-digit standard -- see docstring) |
 | `src/underwriting/facts.cljc` | Per-jurisdiction underwriting requirement catalog with an official spec-basis citation per entry, honest coverage reporting |
 | `src/underwriting/underwriterllm.cljc` | **Underwriter-LLM Advisor** -- `mock-advisor` ‖ `llm-advisor`; intake/assessment/KYC/binding proposals |
+| `src/underwriting/corporate_intel.cljc` | optional cross-reference into [`cloud-itonami-isic-8291`](https://github.com/cloud-itonami/cloud-itonami-isic-8291)'s `:disclosure/screen-name` (ADR-2607110400 §5) -- catches an insured/beneficiary clean on every LOCAL field but flagged in 8291's own sourced PEP/sanctions data; wired into `screen-kyc` via an injected fn, default is a no-op so every prior caller's behavior is unchanged unless explicitly opted in |
 | `src/underwriting/governor.cljc` | **UnderwritingGovernor** -- spec-basis · sanctions hold · document-complete · confidence floor · actuation gate |
 | `src/underwriting/phase.cljc` | **Phase 0→3** -- read-only → assisted intake → assisted assess/screen → supervised (binding always human) |
 | `src/underwriting/operation.cljc` | **OperationActor** -- langgraph-clj StateGraph |
 | `src/underwriting/sim.cljc` | demo driver |
-| `test/underwriting/*_test.clj` | governor contract · phase invariants · store parity · registry conformance · facts coverage |
+| `test/underwriting/*_test.clj` | governor contract · phase invariants · store parity · registry conformance · facts coverage · corporate-intelligence integration |
 | `wasm/underwriting_decision.kotoba` | PoC: a WASM-compiled (`kotoba-lang/kotoba` -> `kotoba-lang/kototama`'s `actor:host` ABI) reduction of `underwriting.governor/check`, incl. an `llm-infer` advisor consult on escalation -- see `wasm/README.md` for scope, the input/output ABI, and what's out of scope (Store, EDN proposals, the StateGraph) |
 
 ## Jurisdiction coverage (honest)
