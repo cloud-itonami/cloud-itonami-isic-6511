@@ -20,7 +20,7 @@
                   ["insured" ["p"] -1 "JPN"]
                   ["insured" ["p"] 0 ""]]]
     (doseq [[insured beneficiaries coverage jurisdiction] bad-args]
-      (is (thrown? Exception
+      (is (thrown? #?(:clj Exception :cljs js/Error)
                    (r/register-binding insured beneficiaries coverage jurisdiction 1))))))
 
 (deftest endorsement-is-append-only
