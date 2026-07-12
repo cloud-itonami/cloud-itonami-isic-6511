@@ -28,9 +28,15 @@
                              auto, at any phase (structural, not a policy
                              toggle)."
   (:require [underwriting.facts :as facts]
+            [underwriting.kernels.gate :as gate]
             [underwriting.store :as store]))
 
-(def confidence-floor 0.6)
+(def confidence-floor
+  "Documented threshold. The DECIDING copy is
+  `underwriting.kernels.gate/confidence-floor-x100` (integer x100 in
+  the safety kernel); this def is kept for callers/docs and pinned
+  equal by `underwriting.kernels.gate-test`."
+  0.6)
 
 (def high-stakes
   "Stakes grave enough to always require a human, even when clean.
@@ -38,6 +44,12 @@
   coverage). There is exactly one member on purpose: actuation is not a
   spectrum."
   #{:actuation})
+
+(defn- confidence->x100
+  "Host bridge (façade-side, not kernel vocabulary): scale a 0.0..1.0
+  advisor confidence to the kernel's integer x100 wire code."
+  [c]
+  (Math/round (* 100.0 (double c))))
 
 ;; ----------------------------- checks -----------------------------
 
@@ -90,19 +102,29 @@
    - :escalate?   -- soft: low confidence OR actuation. A human decides.
    - :ok?         -- clean AND not escalating: safe to auto-commit."
   [request _context proposal st]
-  (let [hard (into []
-                   (concat (spec-basis-violations request proposal)
-                           (sanctions-violations request proposal st)
-                           (document-violations request st)))
+  (let [spec-v (spec-basis-violations request proposal)
+        sanc-v (sanctions-violations request proposal st)
+        docs-v (document-violations request st)
+        hard (into [] (concat spec-v sanc-v docs-v))
         conf (:confidence proposal 0.0)
-        low? (< conf confidence-floor)
         stakes? (boolean (high-stakes (:stake proposal)))
-        hard? (boolean (seq hard))]
-    {:ok?          (and (not hard?) (not low?) (not stakes?))
+        ;; The decision itself is delegated to the safety kernel
+        ;; (underwriting.kernels.gate, integer-coded fail-closed core);
+        ;; this façade only gathers evidence (violation lists with
+        ;; human-readable details) and maps codes back to keywords.
+        ;; Kernel is stricter than the old inline logic on ONE case by
+        ;; design: an out-of-range confidence (< 0 or > 1.0) now
+        ;; escalates instead of counting as high confidence.
+        code (gate/verdict-code (if (seq spec-v) 1 0)
+                                (if (seq sanc-v) 1 0)
+                                (if (seq docs-v) 1 0)
+                                (confidence->x100 conf)
+                                (if stakes? 1 0))]
+    {:ok?          (= 0 code)
      :violations   hard
      :confidence   conf
-     :hard?        hard?
-     :escalate?    (and (not hard?) (or low? stakes?))
+     :hard?        (= 2 code)
+     :escalate?    (= 1 code)
      :high-stakes? stakes?}))
 
 (defn hold-fact
