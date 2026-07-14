@@ -21,10 +21,9 @@
   always a query over an immutable log -- the audit trail a policyholder
   trusting an operator with their coverage needs, and the evidence an
   operator needs if a binding is later disputed."
-  (:require #?(:clj  [clojure.edn :as edn]
-               :cljs [cljs.reader :as edn])
-            [underwriting.registry :as registry]
-            [langchain.db :as d]))
+  (:require [underwriting.registry :as registry]
+            [langchain.db :as d]
+            [langchain-store.core :as ls]))
 
 (defprotocol Store
   (application [s id])
@@ -127,57 +126,43 @@
 
 ;; ----------------------------- DatomicStore (langchain.db) -----------------------------
 
+;; Schema, the EDN-blob codec (enc/dec*) and the application/party
+;; entity map<->tx<->pull are the shared kotoba-lang/langchain-store
+;; machinery (ADR-2607141600) — the seam ~190 actors hand-roll. This
+;; store is the reference ENTITY-store adopter; the app/party field
+;; specs are the only per-entity data left, and the kyc/assessment/
+;; ledger/binding/sequence attrs (custom query shapes) keep their own
+;; wiring below (still using the shared enc/dec*).
 (def ^:private schema
-  "DataScript/Datomic-style schema: only constraint attrs are declared.
-  Map/compound values (beneficiary id lists, KYC/assessment payloads,
-  ledger facts, binding records) are stored as EDN strings so
-  `langchain.db` doesn't expand them into sub-entities -- the same
-  convention `formation.store` / `realty.store` use."
-  {:app/id            {:db/unique :db.unique/identity}
-   :party/id          {:db/unique :db.unique/identity}
-   :kyc/party-id      {:db/unique :db.unique/identity}
-   :assessment/app-id {:db/unique :db.unique/identity}
-   :ledger/seq        {:db/unique :db.unique/identity}
-   :binding/seq       {:db/unique :db.unique/identity}
-   :sequence/jurisdiction {:db/unique :db.unique/identity}})
+  (ls/identity-schema [:app/id :party/id :kyc/party-id :assessment/app-id
+                       :ledger/seq :binding/seq :sequence/jurisdiction]))
 
-(defn- enc [v] (pr-str v))
-(defn- dec* [s] (when s (edn/read-string s)))
+(defn- enc [v] (ls/enc v))
+(defn- dec* [s] (ls/dec* s))
 
-(defn- app->tx [{:keys [id insured beneficiaries coverage-amount currency
-                        jurisdiction status policy-number]}]
-  (cond-> {:app/id id}
-    insured          (assoc :app/insured insured)
-    beneficiaries    (assoc :app/beneficiaries (enc beneficiaries))
-    coverage-amount  (assoc :app/coverage-amount coverage-amount)
-    currency         (assoc :app/currency currency)
-    jurisdiction     (assoc :app/jurisdiction jurisdiction)
-    status           (assoc :app/status status)
-    policy-number    (assoc :app/policy-number policy-number)))
+(def ^:private app-spec
+  {:id {:attr :app/id}
+   :insured {:attr :app/insured}
+   :beneficiaries {:attr :app/beneficiaries :blob? true :default []}
+   :coverage-amount {:attr :app/coverage-amount}
+   :currency {:attr :app/currency}
+   :jurisdiction {:attr :app/jurisdiction}
+   :status {:attr :app/status}
+   :policy-number {:attr :app/policy-number}})
 
-(def ^:private app-pull
-  [:app/id :app/insured :app/beneficiaries :app/coverage-amount :app/currency
-   :app/jurisdiction :app/status :app/policy-number])
+(def ^:private party-spec
+  {:id {:attr :party/id}
+   :name {:attr :party/name}
+   :role {:attr :party/role}
+   :sanctions-hit? {:attr :party/sanctions-hit? :coerce boolean}
+   :id-doc {:attr :party/id-doc}})
 
-(defn- pull->app [m]
-  (when (:app/id m)
-    {:id (:app/id m) :insured (:app/insured m)
-     :beneficiaries (or (dec* (:app/beneficiaries m)) [])
-     :coverage-amount (:app/coverage-amount m) :currency (:app/currency m)
-     :jurisdiction (:app/jurisdiction m) :status (:app/status m)
-     :policy-number (:app/policy-number m)}))
+(defn- app->tx [m] (ls/map->tx app-spec m))
+(def ^:private app-pull (ls/pull-pattern app-spec))
+(defn- pull->app [m] (ls/pull->map app-spec :id m))
 
-(defn- party->tx [{:keys [id name role sanctions-hit? id-doc]}]
-  (cond-> {:party/id id}
-    name (assoc :party/name name)
-    role (assoc :party/role role)
-    (some? sanctions-hit?) (assoc :party/sanctions-hit? sanctions-hit?)
-    id-doc (assoc :party/id-doc id-doc)))
-
-(defn- pull->party [m]
-  (when (:party/id m)
-    {:id (:party/id m) :name (:party/name m) :role (:party/role m)
-     :sanctions-hit? (boolean (:party/sanctions-hit? m)) :id-doc (:party/id-doc m)}))
+(defn- party->tx [m] (ls/map->tx party-spec m))
+(defn- pull->party [m] (ls/pull->map party-spec :id m))
 
 (defrecord DatomicStore [conn]
   Store
