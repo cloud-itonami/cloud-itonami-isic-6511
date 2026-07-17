@@ -14,8 +14,8 @@
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       line-height: 1.6;
-      color: #333;
-      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      color: #e0e0e0;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -25,9 +25,10 @@
 
     .container {
       max-width: 800px;
-      background: white;
+      background: #1e293b;
       border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+      border: 1px solid #334155;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
       padding: 60px 40px;
       animation: fadeIn 0.6s ease-in;
     }
@@ -38,7 +39,7 @@
     }
 
     h1 {
-      color: #1e3a8a;
+      color: #f1f5f9;
       font-size: 2.5em;
       margin-bottom: 10px;
       font-weight: 700;
@@ -46,8 +47,8 @@
 
     .isic-badge {
       display: inline-block;
-      background: #e0e7ff;
-      color: #1e3a8a;
+      background: #334155;
+      color: #cbd5e1;
       padding: 4px 12px;
       border-radius: 4px;
       font-size: 0.9em;
@@ -55,17 +56,49 @@
       margin-bottom: 30px;
     }
 
-    .pitch {
+    .problem {
       font-size: 1.1em;
       line-height: 1.8;
-      color: #555;
-      margin-bottom: 40px;
-      border-left: 4px solid #1e3a8a;
-      padding-left: 20px;
+      color: #cbd5e1;
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #0f172a;
+      border-left: 4px solid #3b82f6;
+      border-radius: 4px;
     }
 
-    .pitch p {
-      margin-bottom: 12px;
+    .problem strong {
+      color: #f1f5f9;
+    }
+
+    .differentiator {
+      font-size: 1em;
+      line-height: 1.8;
+      color: #e0e0e0;
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #0f172a;
+      border-left: 4px solid #10b981;
+      border-radius: 4px;
+    }
+
+    .differentiator strong {
+      color: #f1f5f9;
+    }
+
+    .what-not {
+      font-size: 0.95em;
+      line-height: 1.7;
+      color: #cbd5e1;
+      margin-bottom: 30px;
+      padding: 15px 20px;
+      background: #0f172a;
+      border-left: 4px solid #f59e0b;
+      border-radius: 4px;
+    }
+
+    .what-not strong {
+      color: #f1f5f9;
     }
 
     .cta-section {
@@ -87,42 +120,43 @@
     }
 
     .cta-primary {
-      background: #1e3a8a;
+      background: #3b82f6;
       color: white;
-      border-color: #1e3a8a;
+      border-color: #3b82f6;
     }
 
     .cta-primary:hover {
-      background: #1e40af;
-      box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3);
+      background: #2563eb;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
     }
 
     .cta-secondary {
-      background: white;
-      color: #1e3a8a;
-      border-color: #1e3a8a;
+      background: transparent;
+      color: #3b82f6;
+      border-color: #3b82f6;
     }
 
     .cta-secondary:hover {
-      background: #f0f4ff;
-      box-shadow: 0 4px 12px rgba(30, 58, 138, 0.2);
+      background: #3b82f6;
+      color: white;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
     }
 
     .links-section {
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid #334155;
       padding-top: 30px;
       text-align: center;
     }
 
     .links-section h3 {
-      color: #1e3a8a;
+      color: #f1f5f9;
       font-size: 1.1em;
       margin-bottom: 20px;
     }
 
     .links-section a {
       display: inline-block;
-      color: #1e3a8a;
+      color: #3b82f6;
       text-decoration: none;
       margin: 0 15px;
       font-weight: 500;
@@ -130,17 +164,17 @@
     }
 
     .links-section a:hover {
-      color: #1e40af;
+      color: #60a5fa;
       text-decoration: underline;
     }
 
     .footer {
       text-align: center;
       font-size: 0.9em;
-      color: #999;
+      color: #64748b;
       margin-top: 40px;
       padding-top: 20px;
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid #334155;
     }
 
     @media (max-width: 600px) {
@@ -168,19 +202,25 @@
     <h1>Life Insurance Blueprint</h1>
     <div class="isic-badge">ISIC Rev.5 6511</div>
 
-    <div class="pitch">
-      <p>An open-source, governed life-insurance underwriting actor for licensed operators. This actor drafts underwriting proposals, screens applicants against KYC/AML requirements, and enforces jurisdictional compliance—all sealed inside an independent UnderwritingGovernor that ensures no policy is bound without a human licensed underwriter's approval.</p>
-      <p>Built on a portable ClojureScript actor runtime with an immutable audit ledger, this blueprint is designed for mutual insurers, community mutual-aid societies, employers administering group life plans, and licensed independent insurers who want to self-host instead of buying closed SaaS.</p>
-      <p>The Underwriter-LLM advisor drafts; the UnderwritingGovernor checks jurisdiction facts, KYC/sanctions hits, and document completeness; only a licensed human binds real coverage.</p>
+    <div class="problem">
+      <strong>The problem:</strong> LLMs can draft underwriting checklists and flag incomplete applications, but they have no jurisdiction to know what insurance regulations actually require, no license to underwrite, and no business deciding whether to bind real coverage. Building your own from scratch invites regulatory risk.
+    </div>
+
+    <div class="differentiator">
+      <strong>The solution:</strong> An independent <strong>UnderwritingGovernor</strong> seals the Underwriter-LLM inside a governed workflow. The LLM drafts; the Governor checks jurisdiction facts (spec-cited), screens against KYC/sanctions, validates documents, and gates policy binding. A licensed human underwriter always makes the final call. Every decision is recorded in an immutable audit ledger.
+    </div>
+
+    <div class="what-not">
+      <strong>What this is not:</strong> This repository does not hold a license to underwrite insurance in any jurisdiction. Your organization (licensed insurer, MGA, employer) supplies the jurisdiction, the KYC/AML program, and the liability. The software supplies the governed, audited scaffold so you don't rebuild compliance from scratch.
     </div>
 
     <div class="cta-section">
-      <a href="https://itonami.cloud/isco-1212/" class="cta-button cta-primary">Fork & Self-Host</a>
+      <a href="https://itonami.cloud/isco-1212/" class="cta-button cta-primary">Claim Free Tenant</a>
       <a href="https://itonami.cloud/docs/go-live.md" class="cta-button cta-secondary">Go-Live Guide</a>
     </div>
 
     <div class="links-section">
-      <h3>Documentation</h3>
+      <h3>Learn More</h3>
       <a href="https://github.com/cloud-itonami/cloud-itonami-isic-6511">Repository</a>
       <a href="./operator-quickstart.md">Quickstart</a>
       <a href="./business-model.md">Business Model</a>

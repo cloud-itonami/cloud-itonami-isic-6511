@@ -2,6 +2,10 @@
 
 Get the life insurance blueprint running and validated on your machine in minutes.
 
+## Who This Is For
+
+This quickstart is for **licensed operators** — mutual insurers, MGAs, employers administering group life plans, or independent life insurance companies — who want to self-host a governed underwriting actor instead of buying closed SaaS. You'll fork this repository, validate the UnderwritingGovernor contract locally, and integrate it with your jurisdiction, KYC/AML program, and policy-administration system.
+
 ## Prerequisites
 
 - **Clojure 1.12+** (check: `clojure --version`)
