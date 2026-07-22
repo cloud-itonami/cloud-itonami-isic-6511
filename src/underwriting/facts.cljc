@@ -59,7 +59,40 @@
           :required-docs ["Antragsformular (application form)"
                           "Gesundheitsfragen (health questionnaire)"
                           "Identitätsnachweis"
-                          "Produktinformationsblatt (product information sheet)"]}})
+                          "Produktinformationsblatt (product information sheet)"]}
+   ;; FRA verified 2026-07-22 directly against acpr.banque-france.fr and
+   ;; legifrance.gouv.fr (WebFetch -- bare curl 403s legifrance.gouv.fr;
+   ;; ACPR's own site tolerates a real browser User-Agent). Two-layer
+   ;; regime, confirmed rather than assumed: the *licensing act itself*
+   ;; (agrement) and life-insurance product-disclosure duties are DOMESTIC
+   ;; Code des assurances provisions the ACPR enforces; the *prudential
+   ;; capital/solvency regime* is the EU Solvency II directive (2009/138/CE)
+   ;; as transposed into French national law by ordonnance n°2015-378 (2
+   ;; April 2015) and decret n°2015-513 (7 May 2015) -- see acpr.banque-
+   ;; france.fr/fr/reglementation/focus-sur-la-reglementation/assurance/
+   ;; solvabilite-ii ("Les directives Solvabilite II et Omnibus II ont ete
+   ;; transposees en droit national par l'ordonnance n°2015-378 du 2 avril
+   ;; 2015 et le decret n°2015-513 du 7 mai 2015."). Licensing legal-basis
+   ;; verified verbatim on legifrance.gouv.fr, Code des assurances art.
+   ;; L321-1: "Les entreprises mentionnees au 1° de l'article L. 310-2 ne
+   ;; peuvent commencer leurs operations qu'apres avoir obtenu un agrement
+   ;; administratif delivre par ... l'Autorite de controle prudentiel et de
+   ;; resolution mentionne a l'article L. 612-1 du code monetaire et
+   ;; financier." The life-insurance "notice d'information" doc requirement
+   ;; (Code des assurances art. L132-5-2) was independently confirmed the
+   ;; same way, cited inline on the doc item below rather than as a
+   ;; separate top-level field (this catalog's other entries don't cite a
+   ;; separate article per required-doc either).
+   "FRA" {:name "France"
+          :owner-authority "Autorité de Contrôle Prudentiel et de Résolution (ACPR)"
+          :legal-basis "Code des assurances, art. L321-1 (agrément administratif requirement)"
+          :national-spec "Ordonnance n° 2015-378 du 2 avril 2015 + décret n° 2015-513 du 7 mai 2015 (transposition nationale de la directive Solvabilité II 2009/138/CE)"
+          :provenance "https://acpr.banque-france.fr/"
+          :notes "Two-layer regime, verified not assumed: licensing (agrément, art. L321-1) and product-disclosure duties are domestic Code des assurances law enforced by the ACPR; capital/solvency requirements are the EU Solvency II directive as transposed by the ordonnance/decret in `:national-spec`."
+          :required-docs ["Bulletin/proposition d'assurance (application form)"
+                          "Questionnaire de santé (health declaration)"
+                          "Justificatif d'identité (identity verification)"
+                          "Notice d'information (product information document, Code des assurances art. L132-5-2)"]}})
 
 (defn spec-basis
   "The jurisdiction's requirement map, or nil -- nil means NO spec-basis,

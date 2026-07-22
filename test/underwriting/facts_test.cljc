@@ -6,6 +6,12 @@
   (is (some? (facts/spec-basis "JPN")))
   (is (string? (:provenance (facts/spec-basis "JPN")))))
 
+(deftest fra-has-a-spec-basis
+  (is (some? (facts/spec-basis "FRA")))
+  (is (string? (:provenance (facts/spec-basis "FRA"))))
+  (is (string? (:legal-basis (facts/spec-basis "FRA"))))
+  (is (seq (facts/doc-checklist "FRA")) "FRA must carry a non-empty required-docs checklist"))
+
 (deftest unknown-jurisdiction-has-no-fabricated-spec-basis
   (is (nil? (facts/spec-basis "ATL"))))
 
