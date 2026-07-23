@@ -12,6 +12,13 @@
   (is (string? (:legal-basis (facts/spec-basis "FRA"))))
   (is (seq (facts/doc-checklist "FRA")) "FRA must carry a non-empty required-docs checklist"))
 
+(deftest irl-has-a-spec-basis
+  (is (some? (facts/spec-basis "IRL")))
+  (is (string? (:provenance (facts/spec-basis "IRL"))))
+  (is (= "Central Bank of Ireland" (:owner-authority (facts/spec-basis "IRL"))))
+  (is (re-find #"S\.I\. No\. 229 of 2018" (:legal-basis (facts/spec-basis "IRL"))))
+  (is (seq (facts/doc-checklist "IRL")) "IRL must carry a non-empty required-docs checklist"))
+
 (deftest unknown-jurisdiction-has-no-fabricated-spec-basis
   (is (nil? (facts/spec-basis "ATL"))))
 
