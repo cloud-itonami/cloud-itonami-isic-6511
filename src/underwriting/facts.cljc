@@ -92,7 +92,46 @@
           :required-docs ["Bulletin/proposition d'assurance (application form)"
                           "Questionnaire de santé (health declaration)"
                           "Justificatif d'identité (identity verification)"
-                          "Notice d'information (product information document, Code des assurances art. L132-5-2)"]}})
+                          "Notice d'information (product information document, Code des assurances art. L132-5-2)"]}
+   ;; IRL citations independently fetched+read directly this session
+   ;; (2026-07-23) from the Irish Statute Book (irishstatutebook.ie,
+   ;; HTTP 200, no bot-detection challenge). The Central Bank of
+   ;; Ireland's own website (centralbank.ie) was tried first but
+   ;; degrades to a nav-only shell without JavaScript ("It appears
+   ;; JavaScript is disabled" -- own text) -- not a bot-detection
+   ;; block, just a JS-required render, disclosed rather than treated
+   ;; as a source read. Confirmed verbatim on the Regulations' own
+   ;; Citation and commencement clause (Regulation 1): "These
+   ;; Regulations may be cited as the European Union (Insurance
+   ;; Distribution) Regulations 2018. ... These Regulations shall come
+   ;; into operation on 1 October 2018." Confirmed the Regulations'
+   ;; own Interpretation clause (Regulation 2(1)) defines: "\"Bank\"
+   ;; means the Central Bank of Ireland". Confirmed the Regulations'
+   ;; own substantive demands-and-needs/disclosure test (Regulation
+   ;; 34(1)-(2)), verbatim: "an insurance distributor shall specify, on
+   ;; the basis of information obtained from the customer, the demands
+   ;; and the needs of that customer and shall provide the customer
+   ;; with objective information about the insurance product in a
+   ;; comprehensible form ... An insurance distributor shall only
+   ;; propose a contract that is consistent with the customer's
+   ;; insurance demands and needs"; and the insurance product
+   ;; information document (IPID) requirement referenced at Regulation
+   ;; 34(6). HONEST GAP: these Regulations govern insurance
+   ;; DISTRIBUTION conduct broadly (life and non-life alike, per their
+   ;; own Part 1 scope) rather than life-insurance-specific
+   ;; underwriting law -- this iteration did not independently confirm
+   ;; a SEPARATE, dedicated Irish life-insurance statute distinct from
+   ;; this EU-transposition instrument, an honest disclosed scope
+   ;; rather than an assumed one.
+   "IRL" {:name "Ireland"
+          :owner-authority "Central Bank of Ireland"
+          :legal-basis "European Union (Insurance Distribution) Regulations 2018 (S.I. No. 229 of 2018)"
+          :national-spec "Regulation 34(1)-(2): an insurance distributor shall specify the customer's demands and needs and provide objective information about the product in comprehensible form, and shall only propose a contract consistent with those demands and needs; Regulation 34(6) requires the insurance product information document (IPID) be provided before the contract is concluded"
+          :provenance "https://www.irishstatutebook.ie/eli/2018/si/229/made/en/print"
+          :required-docs ["Proposal/application form"
+                          "Health declaration"
+                          "Identity verification"
+                          "Insurance product information document (IPID, Regulation 34(6))"]}})
 
 (defn spec-basis
   "The jurisdiction's requirement map, or nil -- nil means NO spec-basis,
