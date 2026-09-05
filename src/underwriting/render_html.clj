@@ -1,693 +1,572 @@
 (ns underwriting.render-html
   "Build-time HTML renderer for `docs/samples/operator-console.html`.
 
-  This namespace does NOT contain a hand-written page. It drives THIS
-  repo's real actor stack -- `underwriting.operation` (a langgraph-clj
-  StateGraph) -> `underwriting.governor` -> `underwriting.store` --
-  through a 13-operation scenario against `underwriting.store/seed-db`,
-  and renders whatever actually came out. Every application id, party
-  name, coverage amount, policy number, verdict, hold basis and audit
-  fact on the page is read back out of the store (or out of the run's
-  `:audit` channel) after the run. Nothing is typed in by hand.
+  Closes flagship checklist item 2 for this blueprint: the repo had a
+  product LP (`docs/index.html`) and an operator guide, but no demo page
+  showing the actor actually deciding anything. This namespace drives the
+  REAL actor stack -- `underwriting.operation` (langgraph StateGraph) ->
+  `underwriting.governor` (UnderwritingGovernor) -> `underwriting.phase`
+  (rollout gate) -> `underwriting.store` (SSoT + append-only ledger) --
+  and renders the page from what actually came back.
 
-  Where the page describes BEHAVIOUR rather than data, it derives that
-  too: the rollout-autonomy matrix is computed by actually calling
-  `underwriting.phase/gate` for every (phase, op) pair rather than
-  transcribing the phase table into prose, and the approval-attribution
-  section reports what the store *actually retained* by inspecting the
-  committed records. Both self-correct: if someone changes the phase
-  table, or fixes the approver drop, the page changes on the next build
-  instead of becoming a lie.
+  Nothing on the page is hand-typed telemetry:
 
-  Scenario shape (see `run-demo!`): one full happy-path lifecycle for
-  `app-1` (intake -> jurisdiction assessment -> KYC on insured and
-  beneficiary -> policy binding), plus four HARD governor holds across
-  three distinct rules, one rollout-phase hold, and one human REJECTION
-  of an escalated proposal.
+    - applications / parties come from `underwriting.store/demo-data`
+      read back through the `Store` protocol AFTER the run;
+    - the jurisdiction table is `underwriting.facts/catalog` and
+      `underwriting.facts/coverage`;
+    - the phase table is `underwriting.phase/phases` (labels, write sets
+      and auto sets are read out of the map, not restated in prose);
+    - every disposition, violation rule, confidence and approval reason
+      is read out of the graph state / governor verdict / store ledger;
+    - the approver-attribution disclosure is MEASURED at render time by
+      looking for an approver key in the committed register, so it stays
+      true if the store is later changed (see `approver-attribution`).
 
-  Determinism: no timestamps, no randomness, no wall-clock anywhere in
-  the page. Every map iterated for output is sorted on a stable key, so
-  two runs against the same seed are byte-identical.
+  `-main` refuses to write a page whose run produced no governor HOLD, or
+  which failed to exercise every HARD rule the governor implements -- a
+  console that shows only happy paths would be advertising, not evidence.
+
+  Deterministic: no timestamps, no random ids, no wall clock. Two runs
+  produce byte-identical output; `-main` is safe to re-run in CI.
 
   Usage: `clojure -M:dev:render-html [out-file]`
-         (default `docs/samples/operator-console.html`)"
-  (:require [jp-go-dds.skin]
-            [clojure.java.io :as io]
-            [clojure.string :as str]
+  (default `docs/samples/operator-console.html`)."
+  (:require [clojure.string :as str]
+            [jp-go-dds.skin]
             [langgraph.graph :as g]
+            [underwriting.corporate-intel :as corporate-intel]
             [underwriting.facts :as facts]
             [underwriting.governor :as governor]
             [underwriting.operation :as op]
             [underwriting.phase :as phase]
-            [underwriting.store :as store]))
-
-;; ----------------------------- the scenario -----------------------------
+            [underwriting.store :as store]
+            [underwriting.underwriterllm :as underwriterllm]))
 
 (def ^:private underwriter
-  "The licensed underwriter, operating at the widest rollout phase."
-  {:actor-id "op-1" :actor-role :underwriter :phase 3})
+  "The human operator in this scenario -- a licensed underwriter. Only ever
+  supplies an approval decision; never bypasses the governor."
+  {:actor-id "op-1" :actor-role :underwriter})
 
-(def ^:private trainee
-  "A second operator pinned to an earlier rollout phase, so the page can
-  show the phase gate refusing an op the governor itself was fine with."
-  {:actor-id "op-2" :actor-role :underwriter :phase 1})
+(def ^:private approver-id
+  "The approving underwriter's operator id, carried on the approval message
+  as `:by`. Whether it survives into the SSoT is measured, not assumed."
+  "uw-lic-001")
 
-;; `langgraph.graph/run*` returns the WRAPPER {:state :events :status
-;; :frontier} -- the channel values (`:disposition`, `:audit`, ..) live
-;; under `:state`, and `:status` is `:done` or `:interrupted`. Reading a
-;; channel straight off the wrapper silently yields nil, which would make
-;; every escalation look like a non-escalation and quietly skip every
-;; approval; both helpers below hand back the wrapper so callers have to
-;; pick one deliberately.
+(def ^:private hard-rules
+  "Every HARD (un-overridable) rule `underwriting.governor` can raise. The
+  demo must exercise all of them -- see `-main`."
+  #{:no-spec-basis :sanctions-hit :incomplete-documents})
+
+;; ----------------------------- the real run -----------------------------
 
 (defn- exec! [actor tid ctx request]
   (g/run* actor {:request request :context ctx} {:thread-id tid}))
 
-(defn- resume! [actor tid decision]
-  (g/run* actor {:approval decision} {:thread-id tid :resume? true}))
+(defn- resume! [actor tid status]
+  (g/run* actor {:approval {:status status :by approver-id}}
+          {:thread-id tid :resume? true}))
+
+(defn- observe
+  "Runs one operation and, when the actor pauses for a human, resumes it
+  with `approval` (:approved | :rejected | nil = leave it pending).
+  Returns the observation map -- every field is read back out of the graph
+  state, the governor verdict or the audit channel."
+  [actor phase-n acc {:keys [thread note request approval]}]
+  (let [ctx  (assoc underwriter :phase phase-n)
+        res  (exec! actor thread ctx request)
+        paused? (= :interrupted (:status res))
+        fin  (if (and paused? approval) (resume! actor thread approval) res)
+        st   (:state fin)
+        audit (:audit st)
+        fact-of (fn [t] (last (filter #(= t (:t %)) audit)))]
+    (swap! acc conj
+           {:thread      thread
+            :note        note
+            :op          (:op request)
+            :subject     (:subject request)
+            :phase       phase-n
+            :status      (:status fin)
+            :disposition (:disposition st)
+            :confidence  (get-in st [:verdict :confidence])
+            :hard?       (get-in st [:verdict :hard?])
+            :violations  (get-in st [:verdict :violations])
+            :escalated?  paused?
+            :approval    (when paused? approval)
+            :ask-reason  (:reason (fact-of :approval-requested))
+            :phase-reason (:phase-reason (fact-of :governor-hold))
+            :approver    (:by (fact-of :approval-granted))
+            :audit       audit})
+    fin))
 
 (defn run-demo!
-  "Run a fresh `store/seed-db` through the real OperationActor and return
-  `{:db db :runs [..]}`.
+  "Drives a fresh seeded store through a scenario that reaches every
+  disposition this actor can produce, using ONLY the ids in
+  `underwriting.store/demo-data` and the jurisdictions in
+  `underwriting.facts/catalog`:
 
-  `:runs` keeps the final graph state of every operation (including its
-  `:audit` channel) so the renderer can show the advisor's own proposal
-  traces and the approval-granted facts -- neither of which the store's
-  persisted ledger keeps.
+    - app-1 (JPN, registered spec-basis, clean parties) walks the whole
+      lifecycle: intake under phase 2 (human approval -- intake is a
+      `:writes` op but not `:auto` at that phase), intake again under
+      phase 3 (auto-commit, governor clean, no human), the JPN
+      underwriting-document assessment, KYC on party-1 and party-2, and
+      finally `:policy/bind`, which ALWAYS escalates (`:stake :actuation`)
+      and is approved by a licensed underwriter -> policy JPN-00000000;
+    - party-3 carries a sanctions/PEP hit  -> HARD `:sanctions-hit`;
+    - app-2's jurisdiction (\"ATL\") is not in `underwriting.facts`, so
+      the advisor cites nothing -> HARD `:no-spec-basis`;
+    - binding app-2 anyway raises TWO hard rules at once -- no spec-basis
+      AND `:incomplete-documents` (its jurisdiction's required docs were
+      never satisfied, because there is no requirement catalog for it);
+    - party-4 has no identity document -> confidence 0.4, below
+      `underwriting.governor/confidence-floor` -> the human is asked and
+      REJECTS, which is a hold too (`:approver-rejected`);
+    - party-5 is clean on every LOCAL field, and is only caught by the
+      optional `underwriting.corporate-intel` cross-reference into
+      cloud-itonami-isic-8291 -- whose own DisclosureGovernor escalates to
+      ITS reviewer, so this side reports inconclusive and refuses to clear;
+    - intake under phase 0 (read-only) is held by the phase gate even
+      though the governor itself was clean.
 
-  The approval is only submitted when the operation ACTUALLY escalated.
-  That matters: if a rule changes so that some op stops escalating, this
-  driver quietly stops approving it rather than crashing or, worse,
-  silently rendering a stale claim.
-
-  Steps, and what each one is here to prove:
-
-    t01  premature `:policy/bind app-1`  -- HARD hold. Binding coverage
-         before the jurisdiction assessment exists trips two rules at
-         once (no cited spec-basis, and the required documents are not
-         satisfied).
-    t02  `:application/intake app-1`     -- the ONE auto-commit cell in
-         the whole phase table (phase 3 x intake, governor clean).
-    t03  `:application/intake app-2` at phase 1 -- same op, earlier
-         phase: enabled to write but not auto, so a human approves.
-    t04  `:jurisdiction/assess app-1` at phase 1 -- the governor is
-         clean here; the ROLLOUT PHASE is what refuses. Distinct from a
-         governor hold, and rendered as such.
-    t05  `:jurisdiction/assess app-1`    -- escalates, approved, commits.
-    t06  `:kyc/screen party-1`           -- insured, clean. Approved.
-    t07  `:kyc/screen party-2`           -- beneficiary, clean. Approved.
-    t08  `:kyc/screen party-5`           -- clean on every local field.
-    t09  `:kyc/screen party-3`           -- HARD hold: sanctions/PEP hit.
-         Never reaches a human at all.
-    t10  `:kyc/screen party-4`           -- no identification document,
-         so low confidence -> escalate. The human REJECTS. Proves the
-         approval seam is a real decision point, not a rubber stamp.
-    t11  `:jurisdiction/assess app-2`    -- HARD hold: no official
-         spec-basis on file for that jurisdiction. Never invent one.
-    t12  `:policy/bind app-1`            -- clean, but `:stake :actuation`
-         so it escalates at every phase. Approved -> coverage bound.
-    t13  `:policy/bind app-2`            -- HARD hold, same two rules as
-         t01, on an application that can never reach a clean assessment."
+  Returns `{:db <store> :runs [observation ..]}`."
   []
-  (let [db    (store/seed-db)
-        actor (op/build db)
-        runs  (atom [])
-        ;; The approval is submitted only when the graph ACTUALLY paused
-        ;; at the interrupt-before gate. If a rule ever changes so that an
-        ;; op stops escalating, this driver stops approving it instead of
-        ;; throwing on a dead thread -- and the page then shows the new
-        ;; behaviour rather than a stale claim about the old one.
-        go    (fn [label tid ctx request approval]
-                (let [paused (exec! actor tid ctx request)
-                      final  (if (and approval (= :interrupted (:status paused)))
-                               (resume! actor tid approval)
-                               paused)]
-                  (swap! runs conj {:label    label
-                                    :thread   tid
-                                    :operator (:actor-id ctx)
-                                    :phase    (:phase ctx)
-                                    :request  request
-                                    :approval approval
-                                    :status   (:status final)
-                                    :state    (:state final)})
-                  final))
-        approve  {:status :approved :by "underwriter-1"}
-        approve2 {:status :approved :by "reviewer-2"}
-        reject   {:status :rejected :by "underwriter-1"}]
+  (let [db      (store/seed-db)
+        actor   (op/build db)
+        ;; the optional cross-reference: one 8291 actor, built once, and
+        ;; consulted through 8291's OWN governed op -- no bypass.
+        intel   (corporate-intel/build)
+        xref    (fn [nm] (corporate-intel/screen nm {:actor intel}))
+        actor+x (op/build db {:advisor (underwriterllm/mock-advisor
+                                        {:corporate-intel-screen xref})})
+        acc     (atom [])
+        step!   (fn [phase-n m] (observe actor phase-n acc m))]
 
-    (go "policy binding attempted before any assessment exists"
-        "t01" underwriter {:op :policy/bind :subject "app-1"} nil)
+    (step! 0 {:thread "app-1-intake-phase-0"
+              :note "phase 0 is read-only: the write never reaches the SSoT"
+              :request {:op :application/intake :subject "app-1"
+                        :patch {:id "app-1" :status :ready}}})
 
-    (go "application intake, governor clean at the widest phase"
-        "t02" underwriter {:op :application/intake :subject "app-1"
-                           :patch {:id "app-1" :status :ready}} nil)
+    (step! 2 {:thread "app-1-intake-phase-2"
+              :note "phase 2 allows the write but not autonomously"
+              :request {:op :application/intake :subject "app-1"
+                        :patch {:id "app-1" :status :ready}}
+              :approval :approved})
 
-    (go "same intake op one rollout phase earlier -- write enabled, autonomy not"
-        "t03" trainee {:op :application/intake :subject "app-2"
-                       :patch {:id "app-2" :status :ready}} approve2)
+    (step! 3 {:thread "app-1-intake-phase-3"
+              :note "phase 3 + governor clean + high confidence = auto-commit"
+              :request {:op :application/intake :subject "app-1"
+                        :patch {:id "app-1" :status :ready}}})
 
-    (go "jurisdiction assessment refused by the rollout phase, not the governor"
-        "t04" trainee {:op :jurisdiction/assess :subject "app-1"} approve)
+    (step! 3 {:thread "app-1-assess"
+              :note "JPN has an official spec-basis; a human still signs it off"
+              :request {:op :jurisdiction/assess :subject "app-1"}
+              :approval :approved})
 
-    (go "jurisdiction assessment against an official spec-basis"
-        "t05" underwriter {:op :jurisdiction/assess :subject "app-1"} approve)
+    (step! 3 {:thread "party-1-kyc"
+              :note "insured: identity document on file, no list match"
+              :request {:op :kyc/screen :subject "party-1"}
+              :approval :approved})
 
-    (go "KYC screening -- insured"
-        "t06" underwriter {:op :kyc/screen :subject "party-1"} approve)
+    (step! 3 {:thread "party-2-kyc"
+              :note "beneficiary: screened on the same footing as the insured"
+              :request {:op :kyc/screen :subject "party-2"}
+              :approval :approved})
 
-    (go "KYC screening -- beneficiary"
-        "t07" underwriter {:op :kyc/screen :subject "party-2"} approve)
+    (step! 3 {:thread "app-1-bind"
+              :note "actuation: real coverage; never auto at ANY phase"
+              :request {:op :policy/bind :subject "app-1"}
+              :approval :approved})
 
-    (go "KYC screening -- clean on every local field"
-        "t08" underwriter {:op :kyc/screen :subject "party-5"} approve)
+    (step! 3 {:thread "party-3-kyc"
+              :note "sanctions/PEP match -- no human is offered the choice"
+              :request {:op :kyc/screen :subject "party-3"}})
 
-    (go "KYC screening -- sanctions/PEP hit"
-        "t09" underwriter {:op :kyc/screen :subject "party-3"} approve)
+    (step! 3 {:thread "app-2-assess"
+              :note "unregistered jurisdiction: requirements must not be invented"
+              :request {:op :jurisdiction/assess :subject "app-2"}})
 
-    (go "KYC screening -- no identification document, and the human refuses"
-        "t10" underwriter {:op :kyc/screen :subject "party-4"} reject)
+    (step! 3 {:thread "app-2-bind"
+              :note "binding on an unassessed application: two hard rules at once"
+              :request {:op :policy/bind :subject "app-2"}})
 
-    (go "jurisdiction assessment with no official spec-basis on file"
-        "t11" underwriter {:op :jurisdiction/assess :subject "app-2"} approve)
+    (step! 3 {:thread "party-4-kyc"
+              :note "no identity document -> below the confidence floor; human declines"
+              :request {:op :kyc/screen :subject "party-4"}
+              :approval :rejected})
 
-    (go "policy binding -- clean, high-stakes, human-approved"
-        "t12" underwriter {:op :policy/bind :subject "app-1"} approve)
+    (observe actor+x 3 acc
+             {:thread "party-5-kyc-corporate-intel"
+              :note "clean locally; isic-8291 escalated to its own reviewer, so this side cannot clear it"
+              :request {:op :kyc/screen :subject "party-5"}})
 
-    (go "policy binding on an application that has no assessment"
-        "t13" underwriter {:op :policy/bind :subject "app-2"} approve)
+    {:db db :runs @acc}))
 
-    {:db db :runs @runs}))
+;; ----------------------------- measurement -----------------------------
 
-;; ----------------------------- html helpers -----------------------------
+(defn- ledger-holds [db]
+  (filter #(#{:governor-hold :approval-rejected} (:t %)) (store/ledger db)))
+
+(defn- observed-hard-rules
+  "The HARD rules this run actually made the governor raise, read out of
+  the committed ledger (not out of the scenario's intentions)."
+  [db]
+  (into (sorted-set)
+        (comp (mapcat :basis) (filter hard-rules))
+        (ledger-holds db)))
+
+(defn- approver-of
+  "The approving underwriter the graph audit recorded for `op`/`subject` in
+  this run, or nil if nobody was ever asked."
+  [runs op subject]
+  (->> runs
+       (filter #(and (= op (:op %)) (= subject (:subject %))))
+       (keep :approver)
+       first))
+
+(defn approver-attribution
+  "MEASURED, not asserted: for each committed effect, is the approving
+  underwriter still readable from the SSoT afterwards?
+
+  `underwriting.operation` puts `:approved-by` on the record's `:payload`
+  only. Whether it survives depends on which key that effect's branch of
+  `underwriting.store/commit-record!` reads -- so this function does not
+  claim anything about the store, it looks in the register the store hands
+  back and reports what is there. If the store is changed, this table
+  changes with it instead of becoming a stale accusation."
+  [db runs]
+  (let [approver-key (fn [m]
+                       (cond (nil? m) nil
+                             (contains? m :approved-by) (:approved-by m)
+                             (contains? m "approved_by") (get m "approved_by")))]
+    (for [{:keys [effect register op subject reader]}
+          [{:effect :application/upsert :op :application/intake :subject "app-1"
+            :reader "store/application \"app-1\""
+            :register (store/application db "app-1")}
+           {:effect :assessment/set :op :jurisdiction/assess :subject "app-1"
+            :reader "store/assessment-of \"app-1\""
+            :register (store/assessment-of db "app-1")}
+           {:effect :kyc/set :op :kyc/screen :subject "party-1"
+            :reader "store/kyc-of \"party-1\""
+            :register (store/kyc-of db "party-1")}
+           {:effect :policy/mark-bound :op :policy/bind :subject "app-1"
+            :reader "first (store/binding-history)"
+            :register (first (store/binding-history db))}]]
+      (let [retained (approver-key register)
+            audited  (approver-of runs op subject)]
+        {:effect effect
+         :reader reader
+         :retained retained
+         :audited audited
+         :verdict (cond
+                    (and retained audited) :retained
+                    (and audited (nil? retained)) :audit-only
+                    (nil? audited) :no-approver)}))))
+
+;; ----------------------------- rendering -----------------------------
 
 (defn- esc [v]
   (-> (str v)
       (str/replace "&" "&amp;")
       (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")
-      (str/replace "\"" "&quot;")))
+      (str/replace ">" "&gt;")))
 
-(defn- nm [k] (if (keyword? k) (name k) (str k)))
+(defn- kw-list [xs]
+  (if (seq xs) (str/join ", " (map #(str (if (keyword? %) (name %) %)) xs)) "—"))
 
 (defn- code [v] (str "<code>" (esc v) "</code>"))
 
 (defn- span [cls v] (str "<span class=\"" cls "\">" v "</span>"))
 
-(defn- dash [] (span "muted" "&mdash;"))
+(defn- tbl [head rows]
+  (str "    <table>\n"
+       "      <thead><tr>"
+       (str/join (map #(str "<th>" % "</th>") head))
+       "</tr></thead>\n      <tbody>\n"
+       (str/join "\n" rows) "\n"
+       "      </tbody>\n    </table>\n"))
+
+(defn- section [title lede body]
+  (str "  <section class=\"card\">\n    <h2>" title "</h2>\n"
+       "    <p class=\"muted\">" lede "</p>\n" body "  </section>\n"))
 
 (defn- row [& cells]
   (str "        <tr>" (str/join (map #(str "<td>" % "</td>") cells)) "</tr>"))
 
-(defn- table [headers rows]
-  (str "    <table>\n"
-       "      <thead><tr>" (str/join (map #(str "<th>" (esc %) "</th>") headers)) "</tr></thead>\n"
-       "      <tbody>\n"
-       (if (seq rows) (str (str/join "\n" rows) "\n") "")
-       "      </tbody>\n"
-       "    </table>\n"))
+(defn- disposition-cell [{:keys [disposition hard? violations phase-reason
+                                approval ask-reason status]}]
+  (cond
+    (and (= :hold disposition) hard?)
+    (span "critical" (str "HARD hold &middot; " (esc (kw-list (map :rule violations)))))
 
-(defn- section [title lede body]
-  (str "  <section class=\"card\">\n"
-       "    <h2>" (esc title) "</h2>\n"
-       "    <p class=\"muted\">" lede "</p>\n"
-       body
-       "  </section>\n"))
+    (and (= :hold disposition) (= :rejected approval))
+    (span "err" "hold &middot; approver rejected")
 
-;; ----------------------------- derivations -----------------------------
-;;
-;; Everything below reads the post-run store / audit channels. No page
-;; content is asserted from this file's own knowledge of the domain.
+    (= :hold disposition)
+    (span "err" (str "hold &middot; " (esc (name (or phase-reason :phase-gate)))))
 
-(defn- audit-facts
-  "Every audit fact produced by the whole scenario, in run order."
-  [runs]
-  (vec (mapcat #(:audit (:state %)) runs)))
+    (= :interrupted status)
+    (span "warn" (str "awaiting approval &middot; " (esc (name (or ask-reason :escalated)))))
 
-(defn- hold? [f] (contains? #{:governor-hold :approval-rejected} (:t f)))
+    (and (= :commit disposition) approval)
+    (span "ok" (str "approved &amp; committed &middot; " (esc (name (or ask-reason :escalated)))))
 
-(defn- hard-hold?
-  "A HARD governor hold: the governor itself named at least one rule a
-  human is not allowed to override. A rollout-phase refusal also arrives
-  as `:governor-hold`, but with an empty `:basis` -- counting those as
-  HARD would overstate the governor."
-  [f]
-  (and (= :governor-hold (:t f)) (seq (:basis f))))
+    (= :commit disposition) (span "ok" "auto-committed")
+    :else (span "muted" (esc (str disposition)))))
 
-(defn- hold-kind [f]
-  (cond (hard-hold? f)                      :hard
-        (= :approval-rejected (:t f))       :human
-        :else                               :phase))
+(defn- application-rows [db]
+  (let [ledger (store/ledger db)]
+    (for [a (store/all-applications db)]
+      (let [last-fact (last (filter #(= (:id a) (:subject %)) ledger))
+            insured (store/party db (:insured a))
+            kyc (store/kyc-of db (:insured a))]
+        (row (code (:id a))
+             (str (esc (:name insured "—")) " " (span "muted" (str "(" (esc (:insured a)) ")")))
+             (kw-list (map #(str (:name (store/party db %)) " (" % ")") (:beneficiaries a)))
+             (str (esc (:coverage-amount a)) " " (esc (:currency a)))
+             (code (:jurisdiction a))
+             (if (facts/spec-basis (:jurisdiction a))
+               (span "ok" "registered")
+               (span "critical" "no spec-basis"))
+             (esc (name (:status a)))
+             (if (:policy-number a) (code (:policy-number a)) (span "muted" "—"))
+             (cond (nil? kyc) (span "muted" "insured not screened")
+                   (= :clear (:verdict kyc)) (span "ok" "insured cleared")
+                   :else (span "warn" (esc (name (:verdict kyc)))))
+             (if last-fact
+               (esc (name (:t last-fact)))
+               (span "muted" "no activity"))
+             (esc (kw-list (:basis last-fact))))))))
 
-(defn- hold-entries
-  "One entry per (hold, rule) pair, so a hold that tripped two rules is
-  attributed to both."
-  [ledger]
-  (vec (for [h ledger
-             :when (hold? h)
-             r (or (seq (:basis h)) [(or (:phase-reason h) :unclassified)])]
-         {:rule r :kind (hold-kind h) :hold h})))
+(defn- party-rows [db runs]
+  (let [parties (:parties (store/demo-data))]
+    (for [pid (sort (keys parties))]
+      (let [p (store/party db pid)
+            kyc (store/kyc-of db pid)
+            r (last (filter #(and (= :kyc/screen (:op %)) (= pid (:subject %))) runs))]
+        (row (code pid)
+             (esc (:name p))
+             (esc (name (:role p)))
+             (if (:id-doc p) (code (:id-doc p)) (span "warn" "none on file"))
+             (if (:sanctions-hit? p) (span "critical" "list match") (span "ok" "no match"))
+             (if kyc
+               (span (if (= :clear (:verdict kyc)) "ok" "warn") (esc (name (:verdict kyc))))
+               (span "muted" "not committed"))
+             (if r (disposition-cell r) (span "muted" "not screened in this run"))
+             (if kyc
+               (if (:approved-by kyc) (code (:approved-by kyc)) (span "muted" "—"))
+               (span "muted" "—")))))))
 
-(defn- party-ids
-  "Party ids DERIVED from the store: everyone referenced by a seeded
-  application, plus everyone this run actually addressed. No hand-typed
-  roster -- adding a party to `store/demo-data` shows up here for free."
-  [db ledger]
-  (->> (concat (mapcat (fn [a] (cons (:insured a) (:beneficiaries a)))
-                       (store/all-applications db))
-               (map :subject ledger))
-       (filter some?)
-       distinct
-       (filter #(store/party db %))
-       sort
-       vec))
+(defn- jurisdiction-rows []
+  (for [iso3 (sort (keys facts/catalog))]
+    (let [j (facts/spec-basis iso3)]
+      (row (code iso3)
+           (esc (:name j))
+           (esc (:owner-authority j))
+           (esc (:legal-basis j))
+           (str "<a href=\"" (esc (:provenance j)) "\">" (esc (:provenance j)) "</a>")
+           (str (count (:required-docs j)) " docs")))))
 
-(defn- last-fact-for [ledger subject]
-  (last (filter #(= subject (:subject %)) ledger)))
+(defn- phase-rows []
+  (for [p (sort (keys phase/phases))]
+    (let [{:keys [label writes auto]} (get phase/phases p)]
+      (row (esc p)
+           (esc label)
+           (if (seq writes) (kw-list (sort writes)) (span "muted" "none"))
+           (if (seq auto)
+             (span "ok" (esc (kw-list (sort auto))))
+             (span "warn" "none — every write needs a human"))
+           (if (contains? auto :policy/bind)
+             (span "critical" "INVARIANT BROKEN")
+             (span "ok" "never auto"))))))
 
-(defn- status-cell [ledger subject]
-  (let [f (last-fact-for ledger subject)]
-    (cond
-      (nil? f) (span "muted" "no activity")
-      (= :committed (:t f)) (span "ok" "committed")
-      (hard-hold? f) (span "critical"
-                           (str "HARD hold &middot; "
-                                (esc (str/join ", " (map nm (:basis f))))))
-      (= :approval-rejected (:t f)) (span "warn" "approval refused")
-      (= :governor-hold (:t f)) (span "warn"
-                                      (str "phase hold &middot; "
-                                           (esc (nm (or (:phase-reason f) :unknown)))))
-      :else (span "muted" "in progress"))))
+(defn- run-rows [runs]
+  (for [r runs]
+    (row (code (:thread r))
+         (code (:op r))
+         (code (:subject r))
+         (esc (:phase r))
+         (if-some [c (:confidence r)] (esc c) (span "muted" "—"))
+         (disposition-cell r)
+         (if (:approver r) (code (:approver r)) (span "muted" "—"))
+         (span "muted" (esc (:note r))))))
 
-;; --- applications -------------------------------------------------------
-
-(defn- application-rows [db ledger]
-  (for [{:keys [id insured beneficiaries coverage-amount currency
-                jurisdiction status policy-number]} (store/all-applications db)]
-    (row (code id)
-         (str (esc (:name (store/party db insured))) " " (span "muted" (esc (str "(" insured ")"))))
-         (esc (str/join ", " (map #(str (:name (store/party db %)) " (" % ")") beneficiaries)))
-         (str (span "amt" (esc (format "%,d" (long coverage-amount)))) " " (esc currency))
-         (str (esc jurisdiction) " "
-              (if (facts/spec-basis jurisdiction)
-                (span "ok" "spec-basis on file")
-                (span "critical" "no spec-basis")))
-         (esc (nm status))
-         (if policy-number (span "ok" (code policy-number)) (dash))
-         (status-cell ledger id))))
-
-;; --- parties ------------------------------------------------------------
-
-(defn- kyc-cell [k]
-  (if (nil? k)
-    (span "muted" "not committed")
-    (case (:verdict k)
-      :clear      (span "ok" "clear")
-      :hit        (span "critical" "hit")
-      :incomplete (span "warn" "incomplete")
-      (span "muted" (esc (nm (:verdict k)))))))
-
-(defn- party-rows [db ledger]
-  (for [pid (party-ids db ledger)
-        :let [p (store/party db pid)]]
-    (row (code pid)
-         (esc (:name p))
-         (esc (nm (:role p)))
-         (if (:sanctions-hit? p) (span "critical" "yes") (span "ok" "no"))
-         (if (:id-doc p) (str (span "ok" "on file ") (code (:id-doc p))) (span "warn" "missing"))
-         (kyc-cell (store/kyc-of db pid))
-         (status-cell ledger pid))))
-
-;; --- rollout autonomy matrix -------------------------------------------
-
-(defn- all-ops
-  "Sorted so the table is stable; taken from the phase namespace's own
-  sets, so a newly declared op appears here without editing this file."
-  []
-  (vec (sort-by str (into phase/read-ops phase/write-ops))))
-
-(defn- gate-cell
-  "Ask the REAL phase gate what it does to a governor-clean verdict for
-  this (phase, op). Not a transcription of the phase table -- a call into
-  the same code path `underwriting.operation/:decide` uses."
-  [p o]
-  (let [{:keys [disposition reason]} (phase/gate p {:op o} :commit)]
-    (case disposition
-      :commit   (span "ok" "auto-commit")
-      :escalate (str (span "warn" "human approval")
-                     (when reason (str " " (span "muted" (esc (str "(" (nm reason) ")"))))))
-      (str (span "critical" "blocked")
-           (when reason (str " " (span "muted" (esc (str "(" (nm reason) ")")))))))))
-
-(defn- gate-rows []
-  (let [phases (sort (keys phase/phases))]
-    (for [o (all-ops)]
-      (apply row (code o)
-             (if (contains? phase/read-ops o) "read" "write")
-             (map #(gate-cell % o) phases)))))
-
-(defn- gate-headers []
-  (into ["Op" "Kind"]
-        (for [p (sort (keys phase/phases))]
-          (str "Phase " p " — " (:label (get phase/phases p))))))
-
-;; --- governor holds observed -------------------------------------------
-
-(defn- kind-badge [k]
-  (case k
-    :hard  (span "critical" "HARD &middot; not overridable")
-    :human (span "warn" "human refusal")
-    (span "warn" "rollout phase")))
-
-(defn- rule-detail
-  "The governor's own human-readable detail for this rule, pulled off the
-  first hold that carried it."
-  [entries]
-  (or (->> entries
-           (mapcat #(:violations (:hold %)))
-           (filter #(= (:rule (first entries)) (:rule %)))
-           (map :detail)
-           (remove nil?)
-           first)
-      ""))
-
-(defn- hold-rule-rows [ledger]
-  (let [by-rule (group-by :rule (hold-entries ledger))]
-    (for [r (sort-by str (keys by-rule))
-          :let [entries (get by-rule r)]]
-      (row (code r)
-           (kind-badge (:kind (first entries)))
-           (span "num" (str (count entries)))
-           (esc (str/join ", " (distinct (map #(nm (:op (:hold %))) entries))))
-           (esc (str/join ", " (distinct (map #(:subject (:hold %)) entries))))
-           (esc (rule-detail entries))))))
-
-;; --- advisor proposal traces -------------------------------------------
-
-(defn- proposal-rows [runs]
-  (for [f (audit-facts runs)
-        :when (= :underwriterllm-proposal (:t f))]
-    (row (code (nm (:op f)))
+(defn- hold-rows [db]
+  (for [f (ledger-holds db)]
+    (row (code (:op f))
          (code (:subject f))
-         (esc (:summary f))
-         (esc (:rationale f))
-         (if (seq (:cites f))
-           (esc (str/join ", " (map nm (:cites f))))
-           (span "critical" "none &mdash; nothing cited"))
-         (let [c (:confidence f)]
-           (span (if (< (double c) governor/confidence-floor) "warn" "num")
-                 (esc (format "%.2f" (double c))))))))
+         (if (some hard-rules (:basis f))
+           (span "critical" "HARD — not overridable")
+           (span "err" "hold"))
+         (esc (kw-list (:basis f)))
+         (kw-list (map :detail (:violations f)))
+         (if-some [c (:confidence f)] (esc c) (span "muted" "—")))))
 
-;; --- approval attribution (MEASURED, not assumed) -----------------------
-
-(defn- retained-approver
-  "Read the COMMITTED record back out of the store and report whether the
-  approver identity survived the commit. This is a measurement, not a
-  claim: `underwriting.operation` attaches `:approved-by` to the record's
-  `:payload`, and each `store/commit-record!` effect branch decides for
-  itself whether it reads `:payload` or `:value` -- so retention differs
-  per op in this repo. Rendering it this way means the page corrects
-  itself if the store is ever changed."
-  [db {:keys [op subject]}]
-  (case op
-    :application/intake
-    (let [m (store/application db subject)]
-      {:record "application record" :found? (contains? m :approved-by) :value (:approved-by m)})
-
-    :jurisdiction/assess
-    (let [m (store/assessment-of db subject)]
-      {:record "assessment record" :found? (contains? m :approved-by) :value (:approved-by m)})
-
-    :kyc/screen
-    (let [m (store/kyc-of db subject)]
-      {:record "KYC record" :found? (contains? m :approved-by) :value (:approved-by m)})
-
-    :policy/bind
-    (let [pn (:policy-number (store/application db subject))
-          m  (first (filter #(= pn (get % "record_id")) (store/binding-history db)))]
-      {:record "policy-binding record"
-       :found? (boolean (some #(contains? m %) ["approved_by" "approved-by"]))
-       :value  (or (get m "approved_by") (get m "approved-by"))})
-
-    {:record "unknown" :found? false :value nil}))
-
-(defn- approval-rows [db runs]
-  (for [r runs
-        f (:audit (:state r))
-        :when (= :approval-granted (:t f))
-        :let [ret (retained-approver db f)]]
-    (row (code (nm (:op f)))
-         (code (:subject f))
-         (esc (:by f))
-         (esc (:record ret))
-         (if (:found? ret)
-           (span "ok" (str "retained &middot; " (code (:value ret))))
-           (span "critical" (str (esc (:by f)) " &mdash; audit fact only, not retained in the record"))))))
-
-(defn- approval-summary [db runs]
-  (let [rets (for [r runs
-                   f (:audit (:state r))
-                   :when (= :approval-granted (:t f))]
-               (retained-approver db f))
-        kept (count (filter :found? rets))
-        lost (- (count rets) kept)]
-    (str "Measured on this run by reading each committed record back out of the store: "
-         (span "num" (str (count rets))) " approval"
-         (when (not= 1 (count rets)) "s") " granted, "
-         (span "ok" (str kept " retained")) " the approver in the committed record, "
-         (if (pos? lost)
-           (span "critical" (str lost " did not"))
-           (span "ok" "0 did not"))
-         ". Where the approver was dropped the row still names them, taken from the audit fact, "
-         "and says so explicitly &mdash; an empty column would be indistinguishable from "
-         "&ldquo;nobody approved this&rdquo;.")))
-
-;; --- jurisdiction spec-basis catalog ------------------------------------
-
-(defn- catalog-rows []
-  (for [iso3 (sort (keys facts/catalog))
-        :let [{:keys [name owner-authority legal-basis provenance required-docs]}
-              (get facts/catalog iso3)]]
-    (row (code iso3)
-         (esc name)
-         (esc owner-authority)
-         (esc legal-basis)
-         (str "<a href=\"" (esc provenance) "\">" (esc provenance) "</a>")
-         (str "<ul>" (str/join (map #(str "<li>" (esc %) "</li>") required-docs)) "</ul>"))))
-
-;; --- policy binding records --------------------------------------------
+(defn- attribution-rows [rows]
+  (for [{:keys [effect reader retained audited verdict]} rows]
+    (row (code effect)
+         (code reader)
+         (if audited (code audited) (span "muted" "nobody was asked"))
+         (if retained (code retained) (span "muted" "absent"))
+         (case verdict
+           :retained (span "ok" "retained in the committed record")
+           :audit-only (span "warn" "audit only — not retained in record")
+           :no-approver (span "muted" "auto-committed — there is no approver to retain")))))
 
 (defn- binding-rows [db]
   (for [b (store/binding-history db)]
     (row (code (get b "record_id"))
          (esc (get b "kind"))
-         (esc (get b "insured"))
-         (esc (str/join ", " (get b "beneficiaries")))
-         (span "amt" (esc (format "%,d" (long (get b "coverage_amount")))))
-         (esc (get b "jurisdiction"))
-         (if (get b "immutable") (span "ok" "append-only") (dash)))))
+         (code (get b "insured"))
+         (kw-list (map :id (get b "beneficiaries")))
+         (str (esc (get b "coverage_amount")) " ")
+         (code (get b "jurisdiction"))
+         (if (get b "immutable") (span "ok" "append-only") (span "warn" "mutable"))
+         (span "warn" "unsigned draft — signature is the licensed underwriter's act"))))
 
-;; --- persisted audit ledger --------------------------------------------
-
-(defn- ledger-rows [ledger]
-  (map-indexed
-   (fn [i {:keys [t op subject disposition basis phase-reason phase confidence] :as f}]
-     (row (span "num" (str (inc i)))
-          (cond (hard-hold? f) (span "critical" (esc (nm t)))
-                (hold? f)      (span "warn" (esc (nm t)))
-                :else          (span "ok" (esc (nm t))))
-          (code (nm (or op :n-a)))
-          (code subject)
-          (esc (nm (or disposition :n-a)))
-          (cond (seq basis)  (esc (str/join ", " (map nm basis)))
-                phase-reason (str (esc (nm phase-reason))
-                                  " " (span "muted" (esc (str "(phase " phase ")"))))
-                :else        (dash))
-          (if confidence (span "num" (esc (format "%.2f" (double confidence)))) (dash))))
-   ledger))
-
-;; ----------------------------- the page -----------------------------
+(defn- ledger-rows [db]
+  (for [f (store/ledger db)]
+    (row (esc (name (:t f)))
+         (code (:op f))
+         (code (:subject f))
+         (esc (name (or (:disposition f) :n-a)))
+         (esc (kw-list (:basis f)))
+         (esc (or (:summary f) (kw-list (map :detail (:violations f))))))))
 
 (defn render
-  "Render the whole console from a store that has already been run
-  through `run-demo!` (plus that run's per-operation graph states)."
-  [db runs]
-  (let [ledger (vec (store/ledger db))
-        hard   (filterv hard-hold? ledger)
-        rules  (vec (sort-by str (distinct (mapcat :basis hard))))
-        cov    (facts/coverage)]
+  "Renders the whole document from `db` + `runs` as returned by `run-demo!`."
+  [{:keys [db runs]}]
+  (let [attribution (approver-attribution db runs)
+        cov (facts/coverage)
+        hard (observed-hard-rules db)]
     (str
-     "<!doctype html>\n"
-     "<html lang=\"en\"><head><meta charset=\"utf-8\">\n"
-     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-     "<title>cloud-itonami-isic-6511 &middot; Life insurance &mdash; Operator Console</title>\n"
-     "<style>\n" (jp-go-dds.skin/dds+skin) "\n</style>\n"
-     "</head><body>\n"
-
+     "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+     "<title>cloud-itonami-isic-6511 &middot; life-insurance underwriting operator console</title><style>"
+     (jp-go-dds.skin/dds+skin)
+     "</style></head><body>\n"
      "<header class=\"bar\">\n"
-     "  <h1>Life insurance (ISIC Rev.5 6511) &mdash; Operator Console</h1>\n"
-     "  <span class=\"badge\">build-time sample &middot; generated by running the real actor &middot; "
-     (esc (str (count runs) " operations, " (count ledger) " persisted audit facts, "
-               (count hard) " HARD governor holds across " (count rules) " rules"))
-     "</span>\n"
+     "  <h1>Life insurance (ISIC 6511) — Underwriting Operator Console</h1>\n"
+     "  <p class=\"badge\">read-only sample · every row below was produced by running "
+     "<code>underwriting.operation</code> → <code>underwriting.governor</code> → "
+     "<code>underwriting.store</code> at build time · no wall clock, no random ids</p>\n"
      "</header>\n"
+     "<main>\n"
 
-     "<main class=\"container\">\n"
+     (section
+      "Applications (SSoT, after the run)"
+      (str "Read back through the <code>Store</code> protocol once the scenario finished. "
+           "Ids, parties, coverage amounts and jurisdictions are "
+           "<code>underwriting.store/demo-data</code>; the spec-basis column is a lookup "
+           "into <code>underwriting.facts/catalog</code>.")
+      (tbl ["Application" "Insured" "Beneficiaries" "Coverage" "Jurisdiction"
+            "Spec-basis" "Status" "Policy no." "KYC of insured" "Last ledger fact" "Basis"]
+           (application-rows db)))
 
-     "  <section class=\"banner\">\n"
-     "    <p>Every value on this page was produced by executing "
-     (code "underwriting.operation") " (a langgraph-clj StateGraph) against "
-     (code "underwriting.store/seed-db") " and reading the result back out. "
-     "Regenerate with " (code "clojure -M:dev:render-html") ". The build "
-     "<strong>refuses to write this file</strong> if the scenario produced no HARD governor "
-     "hold, so the page cannot quietly degrade into a demo where the governor never says no.</p>\n"
-     "  </section>\n"
+     (section
+      "Parties &amp; committed KYC register"
+      (str "The advisor screens locally first (identity document, sanctions flag) and only then "
+           "consults the optional <code>underwriting.corporate-intel</code> cross-reference into "
+           "cloud-itonami-isic-8291. A party with no committed verdict is one whose screening "
+           "never earned the right to commit.")
+      (tbl ["Party" "Name" "Role" "Identity document" "Local sanctions flag"
+            "Committed verdict" "This run" "Approved by"]
+           (party-rows db runs)))
 
-     (section "Applications"
-              (str "The seeded application directory, with whatever status this run left it in. "
-                   "Jurisdiction is annotated with whether "
-                   (code "underwriting.facts") " actually holds an official spec-basis for it "
-                   "&mdash; a jurisdiction with none can never reach a policy binding.")
-              (table ["Application" "Insured" "Beneficiaries" "Coverage" "Jurisdiction"
-                      "Status" "Policy number" "Last decision"]
-                     (application-rows db ledger)))
+     (section
+      "Jurisdiction requirement catalog (spec-basis)"
+      (str "<code>underwriting.facts/catalog</code> verbatim — the table the governor checks every "
+           "<code>:jurisdiction/assess</code> proposal against. Coverage is reported honestly: "
+           (:covered cov) " of " (:requested cov) " seeded jurisdictions have an official "
+           "spec-basis. A jurisdiction that is absent has none, and the advisor is not allowed to "
+           "invent one (see <code>app-2</code>, jurisdiction <code>ATL</code>, below).")
+      (tbl ["ISO3" "Jurisdiction" "Owner authority" "Legal basis" "Provenance" "Required docs"]
+           (jurisdiction-rows)))
 
-     (section "Parties"
-              (str "Everyone referenced by a seeded application or addressed by this run. "
-                   "The KYC column is the "
-                   (code "committed") " screening verdict in the store &mdash; a verdict the "
-                   "governor HARD-held never gets committed at all, which is why a sanctions "
-                   "hit shows as uncommitted here rather than as a stored clearance.")
-              (table ["Party" "Name" "Role" "Sanctions/PEP flag" "Identification"
-                      "Committed KYC verdict" "Last decision"]
-                     (party-rows db ledger)))
+     (section
+      "Rollout phase gate"
+      (str "<code>underwriting.phase/phases</code> verbatim. The phase can only make the actor MORE "
+           "conservative than the governor, never less. <code>:policy/bind</code> is absent from every "
+           "phase's auto set — the last column is computed from the table, so it would read "
+           "<em>INVARIANT BROKEN</em> if someone added it.")
+      (tbl ["Phase" "Label" "Writes allowed" "May auto-commit when governor-clean" ":policy/bind"]
+           (phase-rows)))
 
-     (section "Rollout autonomy matrix"
-              (str "Computed at build time by calling " (code "underwriting.phase/gate")
-                   " for every (phase, op) pair with a <em>governor-clean</em> verdict, "
-                   "so this table is the gate itself rather than a description of it. "
-                   "Default phase is " (code (str phase/default-phase)) ". "
-                   "A cell only ever answers &ldquo;how much autonomy does the phase grant&rdquo;; "
-                   "the governor still runs first and can override any of them down to a hold.")
-              (table (gate-headers) (gate-rows)))
+     (section
+      "Operations in this run"
+      (str "One row per <code>langgraph</code> graph run. Disposition, confidence, escalation reason "
+           "and violation rules are read out of the returned graph state — this table is the run, "
+           "not a description of it.")
+      (tbl ["Thread" "Op" "Subject" "Phase" "Confidence" "Disposition" "Approver" "What it demonstrates"]
+           (run-rows runs)))
 
-     (section "Holds observed in this run"
-              (str "Grouped by the rule that fired, with the governor's own detail text. "
-                   (span "critical" "HARD") " holds come from "
-                   (code "underwriting.governor") " and a human approver cannot override them. "
-                   "The other kinds are shown separately on purpose: a rollout-phase refusal and a "
-                   "human refusal are not the compliance layer speaking, and collapsing them "
-                   "together would overstate the governor.")
-              (table ["Rule" "Kind" "Times fired" "Ops" "Subjects" "Governor detail"]
-                     (hold-rule-rows ledger)))
+     (section
+      "Governor holds (committed to the ledger)"
+      (str "HARD rules exercised by this run: <strong>" (esc (kw-list hard)) "</strong> — "
+           "which is every hard rule <code>underwriting.governor</code> implements. A HARD hold is "
+           "never offered to a human: the actor does not pause at "
+           "<code>:request-approval</code> at all, so there is no approval that could release it. "
+           "The build refuses to write this page if this section comes out empty.")
+      (tbl ["Op" "Subject" "Severity" "Rules" "Detail" "Advisor confidence"]
+           (hold-rows db)))
 
-     (section "Advisor proposals (the contained intelligence node)"
-              (str "The Underwriter-LLM's own output for each operation, straight off the run's "
-                   (code ":audit") " channel. It only ever proposes; every row here was then "
-                   "censored by the governor before anything could touch the store. "
-                   "Confidence below the floor of "
-                   (span "num" (esc (format "%.2f" (double governor/confidence-floor))))
-                   " forces a human look. An empty citation list is a HARD violation, not a "
-                   "style problem.")
-              (table ["Op" "Subject" "Draft" "Rationale" "Cites" "Confidence"]
-                     (proposal-rows runs)))
+     (section
+      "Approver attribution (measured at render time)"
+      (str "Approval arrives as <code>{:approval {:status :approved :by …}}</code> and the operation "
+           "puts it on the record's <code>:payload</code>. Whether it is still readable afterwards "
+           "depends on which key that effect's branch of <code>store/commit-record!</code> reads — so "
+           "this table is produced by looking for an approver key in the register the store hands "
+           "back, not by asserting anything about the store. Change the store and this table changes "
+           "with it.")
+      (tbl ["Effect" "Register read back" "Approver in audit" "Approver in record" "Retention"]
+           (attribution-rows attribution)))
 
-     (section "Approval attribution"
-              (approval-summary db runs)
-              (table ["Op" "Subject" "Approver (audit fact)" "Committed record"
-                      "Approver in the committed record?"]
-                     (approval-rows db runs)))
+     (section
+      "Policy-binding drafts"
+      (str "<code>underwriting.registry</code> output, appended by <code>store/commit-record!</code> "
+           "under <code>:policy/mark-bound</code>. The policy number is a jurisdiction-scoped sequence "
+           "— this repo deliberately does not invent an international check-digit standard for "
+           "life-insurance policy numbers, because there is none.")
+      (tbl ["Policy no." "Kind" "Insured" "Beneficiaries" "Coverage" "Jurisdiction" "History" "Certificate"]
+           (binding-rows db)))
 
-     (section "Jurisdiction spec-basis catalog"
-              (str "The official sources the governor checks every jurisdiction proposal against. "
-                   (esc (:note cov)) " Covered: "
-                   (span "num" (str (:covered cov))) " of "
-                   (span "num" (str (:requested cov))) ".")
-              (table ["ISO3" "Jurisdiction" "Authority" "Legal basis" "Provenance"
-                      "Required underwriting documents"]
-                     (catalog-rows)))
-
-     (section "Policy binding records"
-              (str "Append-only binding drafts produced by "
-                   (code "underwriting.registry") ". These are the record an operator keeps; "
-                   "the certificate this actor emits is deliberately unsigned, because signing "
-                   "is the licensed underwriter's act and not the actor's.")
-              (table ["Policy number" "Kind" "Insured" "Beneficiaries" "Coverage"
-                      "Jurisdiction" "History"]
-                     (binding-rows db)))
-
-     (section "Persisted audit ledger"
-              (str "The append-only decision log the store actually kept &mdash; one fact per "
-                   "operation, commit or hold. This is the evidence trail if a binding is later "
-                   "disputed.")
-              (table ["#" "Fact" "Op" "Subject" "Disposition" "Basis" "Confidence"]
-                     (ledger-rows ledger)))
+     (section
+      "Audit ledger (append-only)"
+      (str "Every decision fact this run committed, in order. " (count (store/ledger db))
+           " facts. Holds are recorded as durably as commits — a rejected proposal leaves evidence.")
+      (tbl ["Fact" "Op" "Subject" "Disposition" "Basis" "Summary / detail"]
+           (ledger-rows db)))
 
      "</main>\n"
-     "<footer class=\"container\">\n"
-     "  <p>Generated by " (code "underwriting.render-html")
-     " from " (code "underwriting.store/seed-db")
-     ". Deterministic: no timestamps, no randomness &mdash; two builds of the same commit are "
-     "byte-identical.</p>\n"
-     "</footer>\n"
+     "<footer><p class=\"muted\">Generated by <code>underwriting.render-html</code> "
+     "(<code>clojure -M:dev:render-html</code>) from a real actor run. "
+     "Confidence floor <code>" (esc governor/confidence-floor) "</code>; high-stakes set <code>"
+     (esc (kw-list (sort governor/high-stakes))) "</code>. This page is a sample, not advice, and "
+     "binds no real coverage: every certificate this actor produces is an unsigned draft.</p></footer>\n"
      "</body></html>\n")))
 
 ;; ----------------------------- entry point -----------------------------
 
-(defn -main
-  "Run the scenario, assert the invariants that keep this page honest, and
-  write the console.
-
-  The invariants are build-time failures rather than conventions, because
-  a console rendered from a run in which the governor never held anything
-  would show a compliance layer that looks like a rubber stamp -- and
-  would do it silently."
-  [& args]
+(defn -main [& args]
   (let [out (or (first args) "docs/samples/operator-console.html")
-        {:keys [db runs]} (run-demo!)
-        ledger (vec (store/ledger db))
-        hard   (filterv hard-hold? ledger)
-        rules  (into (sorted-set) (mapcat :basis hard))
-        apps   (store/all-applications db)]
-
-    (when (zero? (count hard))
-      (throw (ex-info (str "no HARD governor hold in this scenario -- the console would "
-                           "misrepresent the UnderwritingGovernor as a rubber stamp")
-                      {:ledger-facts (count ledger) :operations (count runs)})))
-
-    (when (< (count rules) 3)
-      (throw (ex-info (str "fewer than 3 distinct HARD governor rules exercised -- one hold "
-                           "is not evidence that the governor has more than one reason to say no")
-                      {:rules (vec rules)})))
-
-    (when (empty? apps)
-      (throw (ex-info "no applications in the store -- nothing to render" {})))
-
+        {:keys [db runs] :as result} (run-demo!)
+        holds (ledger-holds db)
+        governor-holds (filter #(= :governor-hold (:t %)) (store/ledger db))
+        observed (observed-hard-rules db)]
+    ;; Build-time invariants. A console that shows only clean commits would
+    ;; be advertising: refuse to write one.
+    (when (empty? governor-holds)
+      (throw (ex-info "refusing to write the console: the run produced no :governor-hold fact"
+                      {:ledger-facts (count (store/ledger db)) :runs (count runs)})))
+    (when-not (= hard-rules (set observed))
+      (throw (ex-info "refusing to write the console: not every HARD governor rule was exercised"
+                      {:required hard-rules :observed observed
+                       :missing (remove observed hard-rules)})))
     (when (empty? (store/binding-history db))
-      (throw (ex-info (str "no policy binding was produced -- the happy path never completed, "
-                           "so the console would only show refusals")
-                      {})))
-
-    ;; A thread that is still :interrupted after we handed it an approval
-    ;; means the resume never landed. That failure is silent -- the
-    ;; operation simply produces no ledger fact -- so it is checked here
-    ;; rather than left to be noticed by eye. (It is not hypothetical:
-    ;; reading `:disposition` off the run* wrapper instead of off
-    ;; `:state` skipped every approval in this scenario's first build.)
-    (let [stranded (filterv #(and (:approval %) (= :interrupted (:status %))) runs)]
-      (when (seq stranded)
-        (throw (ex-info (str "approval was submitted but " (count stranded)
-                             " operation(s) are still paused at the interrupt gate")
-                        {:threads (mapv :thread stranded)}))))
-
-    (let [f (io/file out)]
-      (when-let [p (.getParentFile f)] (.mkdirs p))
-      (spit f (render db runs) :encoding "UTF-8")
-      (println (str "wrote " out
-                    " (" (count runs) " operations, "
-                    (count ledger) " persisted audit facts, "
-                    (count hard) " HARD governor holds across "
-                    (count rules) " distinct rules " (vec rules) ", "
-                    (count apps) " applications, "
-                    (count (store/binding-history db)) " policy binding record(s), "
-                    (.length f) " bytes)"))))
-  nil)
+      (throw (ex-info "refusing to write the console: no policy binding was ever drafted"
+                      {:runs (count runs)})))
+    (spit out (render result))
+    (println "wrote" out
+             (str "(" (count runs) " runs, "
+                  (count (store/ledger db)) " ledger facts, "
+                  (count holds) " holds, hard rules exercised: "
+                  (str/join "," (map name observed)) ")"))))
