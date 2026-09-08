@@ -14,7 +14,7 @@
   operator would keep, not the act of binding coverage itself (that is
   `underwriting.operation`'s `:policy/bind`, which is always human-gated
   -- see README `Actuation`)."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn- unsigned-certificate
   "Every certificate this actor produces is UNSIGNED -- signature is the
@@ -46,7 +46,7 @@
     (throw (ex-info "binding: jurisdiction required" {})))
   (when (< sequence 0)
     (throw (ex-info "binding: sequence must be >= 0" {})))
-  (let [policy-number (str (str/upper-case jurisdiction) "-" (zero-pad sequence 8))
+  (let [policy-number (str (str/upper jurisdiction) "-" (zero-pad sequence 8))
         record {"record_id" policy-number
                 "kind" "binding-draft"
                 "insured" insured
