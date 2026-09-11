@@ -68,26 +68,26 @@ Runs clj-kondo to catch common Clojure mistakes. CI mirrors this, so fixing lint
 The **UnderwritingGovernor** is the independent approval layer that seals the Underwriter-LLM advisor inside a governed workflow:
 
 ```
-src/underwriting/governor.cljc
+src/underwriting/governor.cljk
 ```
 
 Key interfaces and checks:
 
 | File | Purpose |
 |---|---|
-| `src/underwriting/governor.cljc` | Governor spec check, sanctions hold, document completeness, actuation gate |
-| `src/underwriting/phase.cljc` | Phase state machine (0→3); phase 3 gates `:policy/bind` and requires human sign-off always |
-| `src/underwriting/facts.cljc` | Per-jurisdiction underwriting requirements with spec citations (currently: JPN, USA-NY, GBR, DEU) |
-| `src/underwriting/underwriterllm.cljc` | Underwriter-LLM advisor (mock or real); sealed; never binds policies autonomously |
-| `src/underwriting/operation.cljc` | The OperationActor StateGraph that orchestrates phases and applies governance |
-| `src/underwriting/store.cljc` | Audit ledger and immutable policy-binding history |
+| `src/underwriting/governor.cljk` | Governor spec check, sanctions hold, document completeness, actuation gate |
+| `src/underwriting/phase.cljk` | Phase state machine (0→3); phase 3 gates `:policy/bind` and requires human sign-off always |
+| `src/underwriting/facts.cljk` | Per-jurisdiction underwriting requirements with spec citations (currently: JPN, USA-NY, GBR, DEU) |
+| `src/underwriting/underwriterllm.cljk` | Underwriter-LLM advisor (mock or real); sealed; never binds policies autonomously |
+| `src/underwriting/operation.cljk` | The OperationActor StateGraph that orchestrates phases and applies governance |
+| `src/underwriting/store.cljk` | Audit ledger and immutable policy-binding history |
 
 ## Next Steps
 
 ### Run a production dry-run
 
 1. Fork this repository to your organization account
-2. Configure the UnderwritingGovernor's hold/escalation policy in your operator config (see `src/underwriting/governor.cljc`)
+2. Configure the UnderwritingGovernor's hold/escalation policy in your operator config (see `src/underwriting/governor.cljk`)
 3. Import your historical policies against the store contract and validate record integrity
 4. Run an internal operation (e.g., one real applicant) through the actor and audit the output
 5. Certify your audit export (see `docs/operator-guide.md`)
@@ -97,13 +97,13 @@ Key interfaces and checks:
 Once you've validated the contract locally:
 
 1. Deploy the actor to a runtime (Clojure, ClojureScript/Node, or WASM — see `wasm/README.md` for PoC)
-2. Implement your jurisdiction-specific KYC/AML program and link it into `src/underwriting/underwriterllm.cljc`'s `:screen-kyc` override
+2. Implement your jurisdiction-specific KYC/AML program and link it into `src/underwriting/underwriterllm.cljk`'s `:screen-kyc` override
 3. Integrate your policy administration system (billing, claims, beneficiary tracking)
 4. Always route `:policy/bind` decisions to a human underwriter; the governor will never approve a policy with hard violations (fabricated law, sanctions hit, incomplete docs)
 
 ## Jurisdiction Coverage
 
-The catalog in `src/underwriting/facts.cljc` currently covers:
+The catalog in `src/underwriting/facts.cljk` currently covers:
 - Japan (JPN)
 - United States — New York (USA-NY)
 - Great Britain (GBR)
