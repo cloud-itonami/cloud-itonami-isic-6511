@@ -29,7 +29,7 @@
   the page. Every map iterated for output is sorted on a stable key, so
   two runs against the same seed are byte-identical.
 
-  Usage: `clojure -M:dev:render-html [out-file]`
+  Usage: `kbb -M:dev:render-html [out-file]`
          (default `docs/samples/operator-console.html`)"
   (:require [jp-go-dds.skin]
             [clojure.java.io :as io]
@@ -537,7 +537,7 @@
      "    <p>Every value on this page was produced by executing "
      (code "underwriting.operation") " (a langgraph-clj StateGraph) against "
      (code "underwriting.store/seed-db") " and reading the result back out. "
-     "Regenerate with " (code "clojure -M:dev:render-html") ". The build "
+     "Regenerate with " (code "kbb -M:dev:render-html") ". The build "
      "<strong>refuses to write this file</strong> if the scenario produced no HARD governor "
      "hold, so the page cannot quietly degrade into a demo where the governor never says no.</p>\n"
      "  </section>\n"
