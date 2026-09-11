@@ -8,7 +8,7 @@ including the new `llm-infer` host capability (`llm/infer`, id 225 in
 
 **Read `underwriting_decision.kotoba`'s own header comment first** -- it is
 the authoritative scope statement. In short: this is a faithful reduction
-of `src/underwriting/governor.cljc`'s `check` logic to the `.kotoba`
+of `src/underwriting/governor.cljk`'s `check` logic to the `.kotoba`
 minimal subset, **not** a replacement for the governor, the Store, or the
 `langgraph-clj` actor. It has no map/keyword/Store access; every fact the
 real governor would look up from `underwriting.store` is instead a scalar

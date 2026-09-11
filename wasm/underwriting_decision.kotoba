@@ -1,5 +1,5 @@
 ;; underwriting_decision.kotoba -- a WASM-compiled, capability-sandboxed
-;; reduction of `underwriting.governor/check` (src/underwriting/governor.cljc)
+;; reduction of `underwriting.governor/check` (src/underwriting/governor.cljk)
 ;; for the `kototama.tender` actor:host ABI (ADR-2607062330/2607062400).
 ;;
 ;; SCOPE (read before trusting this as "the governor"): this is a FAITHFUL
