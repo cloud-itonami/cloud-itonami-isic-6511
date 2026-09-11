@@ -74,7 +74,7 @@ with the actual confidence value.
 # (id 225) on the classpath -- ahead of any older cached copy, since
 # `-Sdeps :override-deps` alone did not take effect against the git-lib
 # cache in testing; prepending src+resources to an explicit classpath did:
-java -cp "<kotoba-core-contracts>/src:<kotoba-core-contracts>/resources:$(clojure -Spath)" \
+java -cp "<kotoba-core-contracts>/src:<kotoba-core-contracts>/resources:$(kbb -Spath)" \
   clojure.main -m kotoba.launcher wasm emit wasm/underwriting_decision.kotoba \
   --policy wasm/underwriting_decision_policy.edn \
   --output wasm/underwriting_decision.wasm --json

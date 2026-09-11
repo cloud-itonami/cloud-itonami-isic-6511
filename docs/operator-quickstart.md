@@ -28,7 +28,7 @@ cd cloud-itonami-isic-6511
 The `:run` target walks a clean application and a hard-hold case through the UnderwritingGovernor:
 
 ```bash
-clojure -M:dev:run
+kbb -M:dev:run
 ```
 
 This:
@@ -43,7 +43,7 @@ Output appears in the terminal; a clean binding is proposed but never autonomous
 ### 3. Validate the governor contract (3–5 minutes)
 
 ```bash
-clojure -M:dev:test
+kbb -M:dev:test
 ```
 
 This runs:
@@ -58,7 +58,7 @@ If any test fails, check that Clojure 1.12+ and Java 17+ are installed, and all 
 ### 4. Lint the code
 
 ```bash
-clojure -M:lint
+kbb -M:lint
 ```
 
 Runs clj-kondo to catch common Clojure mistakes. CI mirrors this, so fixing lint errors locally prevents CI flakes.

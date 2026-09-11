@@ -1,5 +1,5 @@
 (ns underwriting.sim
-  "Demo driver -- `clojure -M:dev:run`. Walks a clean application through
+  "Demo driver -- `kbb -M:dev:run`. Walks a clean application through
   intake -> jurisdiction underwriting assessment -> KYC screening ->
   policy-bind proposal (always escalates) -> human approval -> commit,
   then shows a HARD hold (a sanctions hit) that never reaches a human at
