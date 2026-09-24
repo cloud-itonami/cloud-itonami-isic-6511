@@ -5,7 +5,7 @@
   change, not a rewrite -- see `formation.store-contract-test` /
   `realty.store-contract-test` for the same pattern on the other actors
   in this family."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [underwriting.store :as store]))
 
 (defn- backends []
