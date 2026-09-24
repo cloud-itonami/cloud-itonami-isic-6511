@@ -1,0 +1,43 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
+;;
+;; README "Robotics premise": a medical-exam sample courier and
+;; document-intake robot moves physical specimens and documents between
+;; examiner and underwriter (ISIC 6511, life insurance). Its physical work:
+;; carrying a cooled specimen box across the exam site, keeping the specimens
+;; cold on the way, and feeding signed application documents into intake.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isic-6511"
+ :cases
+ [{:id :specimen-box-courier
+   :kind :transport
+   :procedure "courier robot carries a cooled blood/urine specimen box from the exam room to the lab pickup point"
+   :params {:mass-kg 35.0 :payload-kg 4.0 :v-max-mps 1.0 :a-max-mps2 0.3
+            :brake-decel-mps2 0.5 :drive-force-n 80.0 :crr 0.02
+            :cog-height-m 0.45 :support-half-length-m 0.22 :max-time-s 3600.0}
+   :sweep {:param :distance-m :values [20.0 60.0 120.0 200.0 300.0]}
+   :quantity :cycle-time-s
+   :limit {:max 240.0 :basis "estimate: hand-off to the lab courier inside a 5-minute window, leaving margin for doors and lifts"}
+   :boundary {:lo 10.0 :hi 600.0}}
+  {:id :specimen-cold-box-wall
+   :kind :thermal
+   :procedure "insulated specimen box wall in a hot car park: cold packs hold the interior air at 4 C, outside air 35 C; the inner face must stay in the refrigerated range"
+   :params {:conductivity-w-mk 0.035 :density-kg-m3 30.0 :specific-heat-j-kgk 1400.0
+            :t0-c 4.0 :t-hot-c 35.0 :h-front-w-m2k 10.0 :t-back-ambient-c 4.0 :h-back-w-m2k 3.0
+            :threshold-c 8.0 :duration-s 14400.0 :nodes 11}
+   :sweep {:param :thickness-m :values [0.01 0.02 0.04 0.06 0.08 0.10]}
+   :quantity :final-back-c
+   :limit {:max 8.0 :basis "estimate: 2-8 C refrigerated range clinical laboratories commonly require for serum / whole-blood transport"}
+   :boundary {:lo 0.002 :hi 0.08}}
+  {:id :application-folder-to-intake
+   :kind :manipulator
+   :procedure "arm moves a signed application folder from the examiner's tray into the intake scanner feeder"
+   :params {:l1-m 0.35 :l2-m 0.30 :m1-kg 2.5 :m2-kg 1.8
+            :from [0.45 0.05] :to [0.15 0.40] :duration-s 1.5 :steps 400}
+   :sweep {:param :payload-kg :values [0.2 0.5 1.0 2.0 3.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 25.0 :basis "estimate: continuous shoulder torque of a 3 kg-class desktop arm"}
+   :boundary {:lo 0.05 :hi 15.0}}]}
