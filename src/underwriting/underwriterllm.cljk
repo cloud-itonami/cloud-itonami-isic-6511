@@ -23,7 +23,7 @@
      :effect     kw             ; how a commit would mutate the SSoT
      :stake      kw|nil         ; :actuation if it touches a real binding
      :confidence 0..1}"
-  (:require #?(:clj  [clojure.edn :as edn]
+  (:require #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [kotoba.lang.text :as str]
             [underwriting.facts :as facts]
