@@ -32,7 +32,7 @@
   Usage: `kbb -M:dev:render-html [out-file]`
          (default `docs/samples/operator-console.html`)"
   (:require [jp-go-dds.skin]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [langgraph.graph :as g]
             [underwriting.facts :as facts]
@@ -680,7 +680,7 @@
                         {:threads (mapv :thread stranded)}))))
 
     (let [f (io/file out)]
-      (when-let [p (.getParentFile f)] (.mkdirs p))
+      (when-let [p (io/parent-file f)] (io/mkdirs p))
       (spit f (render db runs) :encoding "UTF-8")
       (println (str "wrote " out
                     " (" (count runs) " operations, "
@@ -689,5 +689,5 @@
                     (count rules) " distinct rules " (vec rules) ", "
                     (count apps) " applications, "
                     (count (store/binding-history db)) " policy binding record(s), "
-                    (.length f) " bytes)"))))
+                    (io/length f) " bytes)"))))
   nil)
