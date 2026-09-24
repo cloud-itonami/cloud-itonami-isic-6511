@@ -2,7 +2,7 @@
   "The phase table as executable tests. The single invariant this repo
   cannot regress on: `:policy/bind` must NEVER be a member of any phase's
   `:auto` set."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [underwriting.phase :as phase]))
 
 (deftest policy-bind-never-auto-at-any-phase

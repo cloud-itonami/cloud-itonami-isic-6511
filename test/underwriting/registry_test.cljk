@@ -1,5 +1,5 @@
 (ns underwriting.registry-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [underwriting.registry :as r]))
 
 (deftest certificate-is-a-draft-not-a-real-binding
