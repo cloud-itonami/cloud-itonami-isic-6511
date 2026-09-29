@@ -17,7 +17,7 @@ calling `main` (see the Input ABI below).
 
 ## Language-subset finding worth flagging
 
-The background research for this task (and this workspace's CLAUDE.md)
+The background research for this task (and this workspace's AGENTS.md)
 describes `.kotoba` as `def`/`defn`/`ns`/`if`/`when`/`let`/`do`/
 arithmetic/comparison/`and`/`or`/`not` + basic string ops + recursion.
 Empirically, against the current `kotoba-lang/kotoba` `kotoba wasm emit`
